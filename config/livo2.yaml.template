@@ -1,0 +1,89 @@
+common:
+  lid_topic:  "/lidar_points"
+  imu_topic:  "/lidar_imu"
+  img_topic:  "/camera/image_raw"
+  img_en: 1
+  lidar_en: 1
+  ros_driver_bug_fix: false
+
+extrin_calib:
+  extrinsic_T: [0.0, 0.0, 0.0]
+  extrinsic_R: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+  # Rotation from LiDAR to camera frame
+  # LiDAR: X=camera-right, Y=backward+down 45deg (connector), Z=forward+down 45deg (spin axis)
+  # Camera: X=right, Y=down, Z=forward
+  # Using exact 1/sqrt(2) = 0.7071067811865476 for Sophus SO3 orthogonality check
+  Rcl: [1.0, 0.0, 0.0, 0.0, 0.7071067811865476, 0.7071067811865476, 0.0, -0.7071067811865476, 0.7071067811865476]
+  # Translation: LiDAR origin in camera frame [right, down, forward] metres
+  # LiDAR is 50cm forward, 2cm below camera centre
+  Pcl: [0.0, 0.02, 0.50]
+
+time_offset:
+  imu_time_offset: 0.0
+  img_time_offset: 0.0
+  exposure_time_init: 0.0
+  lidar_time_offset: 0.0
+
+preprocess:
+  hilti_en: false
+  point_filter_num: 3
+  filter_size_surf: 0.3
+  lidar_type: 8          # HESAI_JT128
+  scan_line: 128
+  blind: 0.3
+
+vio:
+  max_iterations: 5
+  outlier_threshold: 500.0
+  img_point_cov: 1000.0
+  patch_size: 8
+  patch_pyrimid_level: 4
+  normal_en: true
+  raycast_en: false
+  inverse_composition_en: false
+  exposure_estimate_en: true
+  inv_expo_cov: 0.1
+
+imu:
+  imu_en: true
+  imu_int_frame: 30
+  acc_cov: 0.1
+  gyr_cov: 0.1
+  b_acc_cov: 0.0001
+  b_gyr_cov: 0.0001
+
+lio:
+  max_iterations: 5
+  dept_err: 0.02
+  beam_err: 0.05
+  min_eigen_value: 0.0001
+  voxel_size: 0.4
+  max_layer: 2
+  max_points_num: 100
+  layer_init_num: [5, 5, 5, 5, 5]
+
+local_map:
+  map_sliding_en: true
+  half_map_size: 50
+  sliding_thresh: 1.0
+
+uav:
+  imu_rate_odom: false
+  gravity_align_en: true
+
+publish:
+  dense_map_en: true
+  pub_effect_point_en: false
+  pub_plane_en: true
+  pub_scan_num: 1
+  blind_rgb_points: 0.0
+
+debug:
+  verbose_en: false   # set true to print per-scan timing table and LIO stats
+
+evo:
+  seq_name: "hesai_jt128"
+  pose_output_en: false
+
+pcd_save:
+  pcd_save_en: false

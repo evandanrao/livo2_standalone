@@ -1,0 +1,76 @@
+# Build libfoxglove.so + libfoxglove_cpp.a for aarch64 / Ubuntu 18.04 (glibc 2.27)
+# Run from standalones/livo2/:
+#   docker build -f prebuilt/Dockerfile.aarch64-bionic -t foxglove-bionic-build prebuilt/
+#   docker run --rm -v "$(pwd)/third_party/foxglove-sdk:/src" \
+#              -v "$(pwd)/prebuilt/jetson_nx/lib:/out" \
+#              foxglove-bionic-build
+
+FROM ubuntu:18.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y \
+    curl \
+    build-essential \
+    gcc-aarch64-linux-gnu \
+    g++-aarch64-linux-gnu \
+    cmake \
+    pkg-config \
+    libssl-dev \
+    ca-certificates \
+    clang \
+    libclang-dev \
+    libc6-dev-arm64-cross \
+    && rm -rf /var/lib/apt/lists/*
+
+# Header-only deps required by the foxglove C++ wrapper (cpp/foxglove/src/)
+# Downloaded at image build time so the container has no internet requirement.
+RUN mkdir -p /deps/include/nlohmann && \
+    curl -fsSL -o /deps/include/nlohmann/json.hpp \
+        https://github.com/nlohmann/json/releases/download/v3.12.0/json.hpp && \
+    curl -fsSL -o /deps/include/base64.hpp \
+        https://raw.githubusercontent.com/tobiaslocker/base64/8d96a2a737ac1396304b1de289beb3a5ea0cb752/include/base64.hpp
+
+# Install Rust (stable)
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# Add the aarch64 target
+RUN rustup target add aarch64-unknown-linux-gnu
+
+# Configure Cargo to use Ubuntu 18.04's GCC 7 aarch64 cross-linker
+# (links against glibc 2.27 sysroot — compatible with Jetson NX Ubuntu 18.04)
+RUN mkdir -p /root/.cargo && printf \
+    '[target.aarch64-unknown-linux-gnu]\nlinker = "aarch64-linux-gnu-gcc"\n' \
+    > /root/.cargo/config.toml
+
+# Ubuntu 18.04 clang 6: when generating bindings for aarch64, use the aarch64
+# sysroot (installed via libc6-dev-arm64-cross) so clang finds the right stubs.
+ENV BINDGEN_EXTRA_CLANG_ARGS="--sysroot=/usr/aarch64-linux-gnu -I/usr/aarch64-linux-gnu/include"
+ENV CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc
+ENV AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar
+
+WORKDIR /src/c
+
+CMD set -e \
+    && echo "=== [1/2] Building libfoxglove.so (Rust, aarch64, glibc<=2.27) ===" \
+    && cargo build --release --target aarch64-unknown-linux-gnu \
+    && cp /src/target/aarch64-unknown-linux-gnu/release/libfoxglove.so /out/libfoxglove.so \
+    && echo "  glibc: $(readelf -V /out/libfoxglove.so | grep -oP 'GLIBC_[0-9.]+' | sort -V | uniq | tail -3)" \
+    && echo "=== [2/2] Building libfoxglove_cpp.a (GCC7, aarch64) ===" \
+    && echo "  NOTE: libfoxglove_cpp.a is natively compiled on the Jetson for full libstdc++ ABI compat." \
+    && echo "  See prebuilt/README.md section on libfoxglove_cpp.a for details." \
+    && echo "  (Cross-compiling produces C1Ev references for basic_ostringstream that GCC7 libstdc++ does not export.)" \
+    && mkdir -p /tmp/cpp_build \
+    && for f in /src/cpp/foxglove/src/*.cpp; do \
+           aarch64-linux-gnu-g++ \
+               -std=c++17 -O2 -fPIC \
+               -include cstddef \
+               -D_GLIBCXX_EXTERN_TEMPLATE=0 \
+               -I/src/cpp/foxglove/include \
+               -I/src/c/include \
+               -I/deps/include \
+               -c "$f" -o "/tmp/cpp_build/$(basename "${f%.cpp}").o" ; \
+       done \
+    && aarch64-linux-gnu-ar rcs /out/libfoxglove_cpp.a /tmp/cpp_build/*.o \
+    && echo "  libfoxglove_cpp.a (cross): $(ls -lh /out/libfoxglove_cpp.a | awk '{print $5}')" \
+    && echo "Done."
