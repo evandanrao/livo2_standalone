@@ -866,11 +866,12 @@ PointCloudXYZI::Ptr VoxelMapManager::pubVoxelMap() {
   PointCloudXYZI::Ptr cloud(new PointCloudXYZI());
   cloud->reserve(plane_list.size());
   for (const VoxelPlane &plane : plane_list) {
-    if (!plane.is_plane_) continue;
+    if (!plane.is_plane_)
+      continue;
     pcl::PointXYZINormal pt;
-    pt.x         = static_cast<float>(plane.center_[0]);
-    pt.y         = static_cast<float>(plane.center_[1]);
-    pt.z         = static_cast<float>(plane.center_[2]);
+    pt.x = static_cast<float>(plane.center_[0]);
+    pt.y = static_cast<float>(plane.center_[1]);
+    pt.z = static_cast<float>(plane.center_[2]);
     pt.intensity = 1.0f;
     cloud->push_back(pt);
   }

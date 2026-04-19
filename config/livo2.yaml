@@ -83,6 +83,11 @@ publish:
   pub_scan_num: 1
   blind_rgb_points: 0.0
 
+global_map:
+  enable: true           # accumulated downsampled map on /livo2/global_map
+  filter_size: 0.3       # voxel grid leaf size (m) applied before each publish
+  publish_hz: 0.2        # publish rate (Hz); 0.2 = every 5 seconds
+
 debug:
   verbose_en: false   # set true to print per-scan timing table and LIO stats
   plot_time: -10.0    # suppress timing output until this many seconds elapsed (-10 = always)
@@ -93,8 +98,7 @@ evo:
   pose_output_en: false
 
 pcd_save:
-  pcd_save_en: false
-  interval: -1          # scans between saves (-1 = save at shutdown only)
+  pcd_save_en: true  pcd_dir: "/media/internal_logs/pcd"  # directory for saved .pcd files  interval: -1          # scans between saves (-1 = save at shutdown only)
   type: 0               # 0=XYZI  1=XYZRGB
   filter_size_pcd: 0.5
   colmap_output_en: false

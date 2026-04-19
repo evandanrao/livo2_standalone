@@ -13,6 +13,7 @@
 void lidar_driver_thread(livo::Bridge &bridge, const params::Params &p);
 void camera_driver_thread(livo::Bridge &bridge, const params::Params &p);
 void foxglove_streamer_thread(livo::Bridge &bridge, const params::Params &p);
+void lidar_publisher_thread(livo::Bridge &bridge, const params::Params &p);
 
 // Global bridge pointer for the SIGINT handler
 static livo::Bridge *g_bridge = nullptr;
@@ -83,6 +84,7 @@ int main(int argc, char **argv) {
   std::thread t_lidar(lidar_driver_thread, std::ref(bridge), std::cref(p));
   std::thread t_camera(camera_driver_thread, std::ref(bridge), std::cref(p));
   std::thread t_fox(foxglove_streamer_thread, std::ref(bridge), std::cref(p));
+  std::thread t_udp(lidar_publisher_thread, std::ref(bridge), std::cref(p));
 
   // SLAM runs on this thread (blocking until bridge.running == false)
   slam.run();
@@ -93,6 +95,7 @@ int main(int argc, char **argv) {
   t_lidar.join();
   t_camera.join();
   t_fox.join();
+  t_udp.join();
 
   fprintf(stdout, "[main] Shutdown complete.\n");
   return 0;

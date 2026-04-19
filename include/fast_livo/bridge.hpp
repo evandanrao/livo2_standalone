@@ -11,18 +11,19 @@
 namespace livo {
 
 // Maximum queue capacities to prevent unbounded memory growth
-static constexpr size_t kImuQueueMax      = 2000; // 400 Hz × 5 s
-static constexpr size_t kCloudQueueMax    = 10;   // 10 Hz LiDAR
-static constexpr size_t kImageQueueMax    = 30;   // 30 fps camera
-static constexpr size_t kVizCloudQueueMax = 5;    // downsampled XYZI cloud
-static constexpr size_t kVizImgQueueMax   = 5;    // feature-overlay image
+static constexpr size_t kImuQueueMax = 2000;   // 400 Hz × 5 s
+static constexpr size_t kCloudQueueMax = 10;   // 10 Hz LiDAR
+static constexpr size_t kImageQueueMax = 30;   // 30 fps camera
+static constexpr size_t kVizCloudQueueMax = 5; // downsampled XYZI cloud
+static constexpr size_t kVizImgQueueMax = 5;   // feature-overlay image
 
 // New in Stage 5 — additional visualisation channels
-static constexpr size_t kVizRgbCloudQueueMax = 3;   // LIVO VIO RGB frames
-static constexpr size_t kImuPropQueueMax     = 200; // ~1 s at 200 Hz
-static constexpr size_t kEffectCloudQueueMax = 5;   // matched feature points
-static constexpr size_t kVoxelMapQueueMax    = 3;   // voxel plane centroids
-static constexpr size_t kVisualMapQueueMax   = 5;   // visual tracking sub-map
+static constexpr size_t kVizRgbCloudQueueMax = 3; // LIVO VIO RGB frames
+static constexpr size_t kImuPropQueueMax = 200;   // ~1 s at 200 Hz
+static constexpr size_t kEffectCloudQueueMax = 5; // matched feature points
+static constexpr size_t kVoxelMapQueueMax = 3;    // voxel plane centroids
+static constexpr size_t kVisualMapQueueMax = 5;   // visual tracking sub-map
+static constexpr size_t kGlobalMapQueueMax = 2;   // accumulated downsampled map
 
 struct Bridge {
   // LiDAR driver → SLAM core
@@ -54,7 +55,8 @@ struct Bridge {
   std::mutex viz_rgb_cloud_mtx;
   std::queue<RgbCloudData> viz_rgb_cloud_queue;
 
-  // IMU-propagated pose at ~200 Hz — gives smooth high-rate odometry in Foxglove.
+  // IMU-propagated pose at ~200 Hz — gives smooth high-rate odometry in
+  // Foxglove.
   std::mutex imu_prop_mtx;
   std::queue<PoseData> imu_prop_queue;
 
@@ -69,6 +71,10 @@ struct Bridge {
   // Visual tracking sub-map (3D positions of VIO map points, img_en=1 only).
   std::mutex visual_map_mtx;
   std::queue<CloudData> visual_map_queue;
+
+  // /livo2/global_map — downsampled accumulated world-frame point cloud
+  std::mutex global_map_mtx;
+  std::queue<CloudData> global_map_queue;
 
   // -------------------------------------------------------------------------
 

@@ -112,9 +112,10 @@ Params load(const std::string &livo2_yaml, const std::string &camera_yaml) {
       p.lidar.n_scans = readOr<int>(n, "scan_line", p.lidar.n_scans);
       p.lidar.blind = readOr<double>(n, "blind", p.lidar.blind);
       p.lidar.blind_sqr = p.lidar.blind * p.lidar.blind;
-      // feature_extract_enabled: false = use all points (faster); true = edge/plane features only
-      p.slam.feature_extract_enabled =
-          readOr<bool>(n, "feature_extract_enabled", p.slam.feature_extract_enabled);
+      // feature_extract_enabled: false = use all points (faster); true =
+      // edge/plane features only
+      p.slam.feature_extract_enabled = readOr<bool>(
+          n, "feature_extract_enabled", p.slam.feature_extract_enabled);
       // Note: lidar_type is intentionally not read. The Hesai SDK handles
       // packet decoding; preprocess.cpp does not branch on lidar_type in
       // standalone mode.
@@ -230,6 +231,19 @@ Params load(const std::string &livo2_yaml, const std::string &camera_yaml) {
     }
   }
 
+  // global_map:
+  {
+    cv::FileNode n = fs["global_map"];
+    if (!n.empty()) {
+      p.slam.global_map_en =
+          readOr<bool>(n, "enable", p.slam.global_map_en);
+      p.slam.global_map_filter_size =
+          readOr<double>(n, "filter_size", p.slam.global_map_filter_size);
+      p.slam.global_map_publish_hz =
+          readOr<double>(n, "publish_hz", p.slam.global_map_publish_hz);
+    }
+  }
+
   // debug:
   {
     cv::FileNode n = fs["debug"];
@@ -258,11 +272,11 @@ Params load(const std::string &livo2_yaml, const std::string &camera_yaml) {
     cv::FileNode n = fs["pcd_save"];
     if (!n.empty()) {
       p.slam.pcd_save_en = readOr<bool>(n, "pcd_save_en", p.slam.pcd_save_en);
-      // Key names match ROS1 YAML convention (interval/type, not pcd_save_interval/pcd_save_type)
+      // Key names match ROS1 YAML convention (interval/type, not
+      // pcd_save_interval/pcd_save_type)
       p.slam.pcd_save_interval =
           readOr<int>(n, "interval", p.slam.pcd_save_interval);
-      p.slam.pcd_save_type =
-          readOr<int>(n, "type", p.slam.pcd_save_type);
+      p.slam.pcd_save_type = readOr<int>(n, "type", p.slam.pcd_save_type);
       p.slam.filter_size_pcd =
           readOr<double>(n, "filter_size_pcd", p.slam.filter_size_pcd);
       p.slam.colmap_output_en =

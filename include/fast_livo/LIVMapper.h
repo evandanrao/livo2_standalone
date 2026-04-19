@@ -78,6 +78,8 @@ public:
   std::unordered_map<VOXEL_LOCATION, VoxelOctoTree *> voxel_map;
 
   string root_dir;
+  string pcd_dir_;   // log_dir + "/" (directory portion, for interval saves)
+  string pcd_stem_;  // full path prefix for PCD files, e.g. /media/.../livo2_2026-04-19_15-00-00
   string lid_topic, imu_topic, seq_name, img_topic;
   V3D extT;
   M3D extR;
@@ -156,6 +158,13 @@ public:
   PointCloudXYZI::Ptr pcl_wait_pub;
   PointCloudXYZRGB::Ptr pcl_wait_save;
   PointCloudXYZI::Ptr pcl_wait_save_intensity;
+
+  // Global map accumulation for /livo2/global_map
+  PointCloudXYZI::Ptr global_map_accum_;  // raw accumulated buffer
+  double global_map_filter_size_ = 0.3;   // voxel leaf size (metres)
+  double global_map_publish_interval_ = 5.0; // seconds between publishes
+  double global_map_last_pub_time_ = 0.0;
+  bool global_map_en_ = false;
 
   ofstream fout_pre, fout_out, fout_visual_pos, fout_lidar_pos, fout_points;
 

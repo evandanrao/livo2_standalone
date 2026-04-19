@@ -13,8 +13,14 @@ struct LidarParams {
   int udp_port = 2368;
   int ptc_port = 9347;
   int thread_num = 2;
-  std::string correction_file; // path to .csv
-  std::string firetimes_file;  // path to .csv
+  std::string correction_file; // path to .csv (empty = download from lidar)
+  std::string firetimes_file =  // JT128 bundled CSV; overridable via yaml
+#ifdef HESAI_FIRETIMES_FILE
+      HESAI_FIRETIMES_FILE
+#else
+      ""
+#endif
+      ;
   int n_scans = 128;           // JT128: use all rings
   double blind = 0.01;         // minimum range, metres
   double blind_sqr = 0.0001;   // blind^2, pre-computed
@@ -64,6 +70,7 @@ struct SlamParams {
   int pcd_save_interval = -1;
   bool pcd_save_en = false;
   int pcd_save_type = 0;
+  std::string pcd_dir = "/media/internal_logs/pcd";  // directory for saved .pcd files
   bool img_save_en = false;
   int img_save_interval = 1;
   bool colmap_output_en = false;
@@ -83,7 +90,11 @@ struct SlamParams {
   double blind_rgb_points = 0.01;
   int pub_scan_num = 1;
   bool pub_effect_point_en = false;
-  bool pub_plane_map_en = false;   // publish voxel plane centroids channel
+  bool pub_plane_map_en = false; // publish voxel plane centroids channel
+  // Global map accumulation channel (/livo2/global_map)
+  bool global_map_en = false;
+  double global_map_filter_size = 0.3; // voxel grid leaf size (metres)
+  double global_map_publish_hz = 0.2; // publish rate (Hz); 0.2 = every 5 s
   bool dense_map_en = false;
   bool verbose_en = false;
   // Camera YAML path (used in initializeComponents)

@@ -47,7 +47,20 @@ set(SOPHUS_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party;${CMAKE_CURRENT_
 # ----- Hesai SDK (same pattern as standalones/lio_lc) ------------------------
 set(HESAI_SDK_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/HesaiLidar_SDK_2.0")
 set(DISENABLE_TEST_CC ON CACHE BOOL "Disable Hesai SDK test targets" FORCE)
-set(FIND_CUDA         OFF CACHE BOOL "No CUDA in Hesai SDK"          FORCE)
+set(FIND_CUDA         ON  CACHE BOOL "Find CUDA for Hesai SDK"       FORCE)
+# Jetson NX = Volta = sm_72; set before SDK subdirectory so NVCC picks it up
+find_package(CUDA)
+if(CUDA_FOUND)
+  set(CMAKE_CUDA_ARCHITECTURES 72)
+  set(CUDA_NVCC_FLAGS -arch=sm_72;-O3;)
+  # nvcc may not be in PATH (common on Jetson); set explicitly from find_package result
+  if(NOT CMAKE_CUDA_COMPILER AND CUDA_NVCC_EXECUTABLE)
+    set(CMAKE_CUDA_COMPILER "${CUDA_NVCC_EXECUTABLE}" CACHE FILEPATH "nvcc path" FORCE)
+  endif()
+  message(STATUS "CUDA ${CUDA_VERSION} found — Hesai SDK GPU parser enabled (sm_72), nvcc: ${CMAKE_CUDA_COMPILER}")
+else()
+  message(STATUS "CUDA not found — Hesai SDK will use CPU parser")
+endif()
 add_subdirectory(${HESAI_SDK_DIR} hesai_sdk_build EXCLUDE_FROM_ALL)
 
 # ----- vikit_common (camera models, no ROS) ----------------------------------
@@ -105,6 +118,7 @@ add_executable(hesai_livo2
     src/camera_driver.cpp
     src/foxglove_streamer.cpp
     src/camera_loader.cpp
+    src/lidar_publisher.cpp
     ${FAST_LIVO_SRCS}
 )
 
@@ -126,6 +140,8 @@ target_include_directories(hesai_livo2 PRIVATE
     # Hesai SDK
     ${HESAI_SDK_DIR}/libhesai
     ${HESAI_SDK_DIR}/driver
+    # CUDA runtime headers (needed when USE_CUDA — hesai_lidar_sdk.hpp includes udp_parser_gpu.h)
+    $<$<BOOL:${CUDA_FOUND}>:${CUDA_INCLUDE_DIRS}>
 )
 if(BUILD_FOXGLOVE)
   target_include_directories(hesai_livo2 PRIVATE
@@ -166,10 +182,22 @@ target_link_libraries(hesai_livo2 PRIVATE
     # Threading
     pthread
 )
+# CUDA runtime — link libcudart so GPU parser symbols resolve at link time.
+# genex can't expand CUDA_LIBRARIES list reliably; plain if() is safer.
+if(CUDA_FOUND)
+    target_link_libraries(hesai_livo2 PRIVATE ${CUDA_CUDART_LIBRARY})
+endif()
 
 # ROOT_DIR: Log/ and scripts/ paths relative to project source directory
 # Matches the original catkin package ROOT_DIR convention.
+#
+# HESAI_FIRETIMES_FILE: bundled JT128 firetime correction CSV (same lidar model
+# used by lio_lc standalone). Used as compile-time default; overridable via
+# livo2.yaml lidar/firetimes_file key.
+set(HESAI_FIRETIMES_FILE
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/HesaiLidar_SDK_2.0/correction/firetime_correction/JT128_Firetime Correction File.csv")
 target_compile_definitions(hesai_livo2 PRIVATE
     ROOT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/"
+    HESAI_FIRETIMES_FILE="${HESAI_FIRETIMES_FILE}"
     $<$<BOOL:${BUILD_FOXGLOVE}>:BUILD_FOXGLOVE>
 )

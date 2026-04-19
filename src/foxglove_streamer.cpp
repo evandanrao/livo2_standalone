@@ -159,29 +159,30 @@ static void publish_rgb_cloud(foxglove::messages::PointCloudChannel &ch,
                               const livo::RgbCloudData &cd) {
   using namespace foxglove::messages;
   PointCloud msg;
-  msg.timestamp    = to_ts(cd.timestamp);
-  msg.frame_id     = "map";
+  msg.timestamp = to_ts(cd.timestamp);
+  msg.frame_id = "map";
   constexpr uint32_t stride = 16; // 3×F32 + 3×U8 + 1 pad byte
   msg.point_stride = stride;
   msg.fields = {
-      {"x", 0,  PackedElementField::NumericType::FLOAT32},
-      {"y", 4,  PackedElementField::NumericType::FLOAT32},
-      {"z", 8,  PackedElementField::NumericType::FLOAT32},
+      {"x", 0, PackedElementField::NumericType::FLOAT32},
+      {"y", 4, PackedElementField::NumericType::FLOAT32},
+      {"z", 8, PackedElementField::NumericType::FLOAT32},
       {"r", 12, PackedElementField::NumericType::UINT8},
       {"g", 13, PackedElementField::NumericType::UINT8},
       {"b", 14, PackedElementField::NumericType::UINT8},
   };
   size_t n = cd.cloud->points.size();
-  msg.data.resize(n * stride); // default-initialised to std::byte{0} (padding stays 0)
+  msg.data.resize(
+      n * stride); // default-initialised to std::byte{0} (padding stays 0)
   std::byte *base = msg.data.data();
   for (size_t i = 0; i < n; ++i) {
     const auto &pt = cd.cloud->points[i];
-    std::byte  *slot = base + i * stride;
-    float xyz[3]     = {pt.x, pt.y, pt.z};
-    std::memcpy(slot, xyz, 12);                         // bytes 0-11: xyz
-    slot[12] = static_cast<std::byte>(pt.r);            // byte 12: red
-    slot[13] = static_cast<std::byte>(pt.g);            // byte 13: green
-    slot[14] = static_cast<std::byte>(pt.b);            // byte 14: blue
+    std::byte *slot = base + i * stride;
+    float xyz[3] = {pt.x, pt.y, pt.z};
+    std::memcpy(slot, xyz, 12);              // bytes 0-11: xyz
+    slot[12] = static_cast<std::byte>(pt.r); // byte 12: red
+    slot[13] = static_cast<std::byte>(pt.g); // byte 13: green
+    slot[14] = static_cast<std::byte>(pt.b); // byte 14: blue
     // slot[15] = std::byte{0} (padding, already zero from resize)
   }
   ch.log(msg, to_ns(cd.timestamp));
@@ -216,7 +217,8 @@ void foxglove_streamer_thread(livo::Bridge &bridge, const params::Params &p) {
   std::optional<foxglove::McapWriter> mcap_writer;
   if (p.foxglove.enable_mcap) {
     foxglove::McapWriterOptions opts;
-    std::string mcap_path = make_mcap_path(p);  // keep alive — opts.path is string_view
+    std::string mcap_path =
+        make_mcap_path(p); // keep alive — opts.path is string_view
     opts.path = mcap_path;
     opts.compression = foxglove::McapCompression::Zstd;
     auto res = foxglove::McapWriter::create(opts);
@@ -273,6 +275,10 @@ void foxglove_streamer_thread(livo::Bridge &bridge, const params::Params &p) {
   // Visual tracking sub-map (3D map points, img_en=1 only).
   auto visual_map_ch =
       foxglove::messages::PointCloudChannel::create("/livo2/visual_sub_map")
+          .value();
+  // Accumulated downsampled global map — refreshed at global_map/publish_hz.
+  auto global_map_ch =
+      foxglove::messages::PointCloudChannel::create("/livo2/global_map")
           .value();
   auto camcal_ch =
       foxglove::messages::CameraCalibrationChannel::create("/livo2/camera_info")
@@ -339,7 +345,8 @@ void foxglove_streamer_thread(livo::Bridge &bridge, const params::Params &p) {
     }
 
     // ---- Drain imu_prop_queue (~200 Hz IMU-rate odometry) ----
-    // Publishes every pose — no dropping — to preserve the full high-rate stream.
+    // Publishes every pose — no dropping — to preserve the full high-rate
+    // stream.
     {
       std::queue<livo::PoseData> local;
       {
@@ -425,6 +432,23 @@ void foxglove_streamer_thread(livo::Bridge &bridge, const params::Params &p) {
         while (local.size() > 1)
           local.pop();
         publish_cloud(visual_map_ch, local.front());
+      }
+    }
+
+    // ---- Drain global_map_queue (accumulated downsampled map) ----
+    // Already rate-limited by LIVMapper (global_map/publish_hz). Always send
+    // the latest — Foxglove replaces the topic on each message so older
+    // clients see the growing map.
+    {
+      std::queue<livo::CloudData> local;
+      {
+        std::lock_guard<std::mutex> lk(bridge.global_map_mtx);
+        std::swap(local, bridge.global_map_queue);
+      }
+      if (!local.empty()) {
+        while (local.size() > 1)
+          local.pop();
+        publish_cloud(global_map_ch, local.front());
       }
     }
 

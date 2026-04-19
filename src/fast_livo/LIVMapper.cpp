@@ -37,9 +37,33 @@ LIVMapper::LIVMapper(livo::Bridge &bridge, const params::Params &p)
   pcl_wait_pub.reset(new PointCloudXYZI());
   pcl_wait_save.reset(new PointCloudXYZRGB());
   pcl_wait_save_intensity.reset(new PointCloudXYZI());
+  global_map_accum_.reset(new PointCloudXYZI());
   voxelmap_manager.reset(new VoxelMapManager(voxel_config, voxel_map));
   vio_manager.reset(new VIOManager());
   root_dir = ROOT_DIR;
+  // pcd_stem_: timestamped path prefix in the same dir as the MCAP file.
+  // e.g. /media/internal_logs/livo2/livo2_2026-04-19_15-00-00
+  // Produces: pcd_stem_ + "_raw.pcd" and pcd_stem_ + "_downsampled.pcd"
+  auto mkdirp = [](const std::string &path) {
+    if (system(("mkdir -p " + path).c_str())) {
+      fprintf(stderr, "[LIVMapper] mkdir -p %s failed\n", path.c_str());
+    }
+  };
+  {
+    std::string log_dir = p.log.log_dir;
+    if (!log_dir.empty() && log_dir.back() == '/') log_dir.pop_back();
+    mkdirp(log_dir);
+    char ts[64];
+    auto t = std::time(nullptr);
+    std::strftime(ts, sizeof(ts), "livo2_%Y-%m-%d_%H-%M-%S", std::localtime(&t));
+    pcd_stem_ = log_dir + "/" + ts;
+    pcd_dir_  = log_dir + "/";
+  }
+  // Other log subdirs (debug mats, evo, images) stay relative to ROOT_DIR
+  if (!root_dir.empty() && root_dir.back() != '/')
+    root_dir += '/';
+  for (const char *sub : {"Log", "Log/result", "Log/image", "Log/Colmap/sparse/0"})
+    mkdirp(root_dir + sub);
   initializeFiles();
   initializeComponents(p);
   // Stage 3.4: path.header.stamp = ros::Time::now() removed
@@ -102,6 +126,10 @@ void LIVMapper::readParameters(const params::Params &p) {
   pub_effect_point_en = p.slam.pub_effect_point_en;
   dense_map_en = p.slam.dense_map_en;
   verbose_en = p.slam.verbose_en;
+  global_map_en_ = p.slam.global_map_en;
+  global_map_filter_size_ = p.slam.global_map_filter_size;
+  global_map_publish_interval_ =
+      (p.slam.global_map_publish_hz > 0.0) ? 1.0 / p.slam.global_map_publish_hz : 5.0;
   p_pre->blind_sqr = p_pre->blind * p_pre->blind;
   // ros_driver_fix_en not applicable (standalone has no ROS driver bug)
   ros_driver_fix_en = false;
@@ -169,7 +197,7 @@ void LIVMapper::initializeComponents(const params::Params &p) {
 void LIVMapper::initializeFiles() {
   if (pcd_save_en && colmap_output_en) {
     const std::string folderPath =
-        std::string(ROOT_DIR) + "/scripts/colmap_output.sh";
+        root_dir + "scripts/colmap_output.sh";
 
     std::string chmodCommand = "chmod +x " + folderPath;
 
@@ -187,16 +215,16 @@ void LIVMapper::initializeFiles() {
     }
   }
   if (colmap_output_en)
-    fout_points.open(std::string(ROOT_DIR) + "Log/Colmap/sparse/0/points3D.txt",
+    fout_points.open(root_dir + "Log/Colmap/sparse/0/points3D.txt",
                      std::ios::out);
   if (pcd_save_en)
-    fout_lidar_pos.open(std::string(ROOT_DIR) + "Log/pcd/lidar_poses.txt",
+    fout_lidar_pos.open(pcd_stem_ + "_lidar_poses.txt",
                         std::ios::out);
   if (img_save_en)
-    fout_visual_pos.open(std::string(ROOT_DIR) + "Log/image/image_poses.txt",
+    fout_visual_pos.open(root_dir + "Log/image/image_poses.txt",
                          std::ios::out);
-  fout_pre.open(DEBUG_FILE_DIR("mat_pre.txt"), std::ios::out);
-  fout_out.open(DEBUG_FILE_DIR("mat_out.txt"), std::ios::out);
+  fout_pre.open(root_dir + "Log/mat_pre.txt", std::ios::out);
+  fout_out.open(root_dir + "Log/mat_out.txt", std::ios::out);
 }
 
 void LIVMapper::handleFirstFrame() {
@@ -371,13 +399,13 @@ void LIVMapper::handleLIO() {
     static int ocount = 0;
     std::ofstream outFile, evoFile;
     if (!pos_opend) {
-      evoFile.open(std::string(ROOT_DIR) + "Log/result/" + seq_name + ".txt",
+      evoFile.open(root_dir + "Log/result/" + seq_name + ".txt",
                    std::ios::out);
       pos_opend = true;
       if (!evoFile.is_open())
         fprintf(stderr, "[LIVMapper] open evo file failed\n");
     } else {
-      evoFile.open(std::string(ROOT_DIR) + "Log/result/" + seq_name + ".txt",
+      evoFile.open(root_dir + "Log/result/" + seq_name + ".txt",
                    std::ios::app);
       if (!evoFile.is_open())
         fprintf(stderr, "[LIVMapper] open evo file failed\n");
@@ -445,7 +473,7 @@ void LIVMapper::handleLIO() {
     if (plane_cloud) {
       livo::CloudData cd;
       cd.timestamp = LidarMeasures.last_lio_update_time;
-      cd.cloud     = plane_cloud;
+      cd.cloud = plane_cloud;
       std::lock_guard<std::mutex> lk(bridge_->voxel_map_mtx);
       if (bridge_->voxel_map_queue.size() < livo::kVoxelMapQueueMax)
         bridge_->voxel_map_queue.push(std::move(cd));
@@ -515,10 +543,8 @@ void LIVMapper::savePCD() {
       (pcl_wait_save->points.size() > 0 ||
        pcl_wait_save_intensity->points.size() > 0) &&
       pcd_save_interval < 0) {
-    std::string raw_points_dir =
-        std::string(ROOT_DIR) + "Log/pcd/all_raw_points.pcd";
-    std::string downsampled_points_dir =
-        std::string(ROOT_DIR) + "Log/pcd/all_downsampled_points.pcd";
+    std::string raw_points_dir        = pcd_stem_ + "_raw.pcd";
+    std::string downsampled_points_dir = pcd_stem_ + "_downsampled.pcd";
     pcl::PCDWriter pcd_writer;
 
     if (img_en) {
@@ -677,9 +703,9 @@ void LIVMapper::imu_prop_iteration() {
     // odometry on the /livo2/imu_odom Foxglove channel.
     livo::PoseData pd;
     pd.timestamp = newest_imu.timestamp;
-    pd.rotation  = imu_propagate.rot_end;
-    pd.position  = imu_propagate.pos_end;
-    pd.velocity  = imu_propagate.vel_end;
+    pd.rotation = imu_propagate.rot_end;
+    pd.position = imu_propagate.pos_end;
+    pd.velocity = imu_propagate.vel_end;
     {
       std::lock_guard<std::mutex> lk(bridge_->imu_prop_mtx);
       if (bridge_->imu_prop_queue.size() < livo::kImuPropQueueMax)
@@ -1179,7 +1205,7 @@ void LIVMapper::publish_frame_world(VIOManagerPtr vio_manager) {
       !laserCloudWorldRGB->empty()) {
     livo::RgbCloudData rcd;
     rcd.timestamp = LidarMeasures.last_lio_update_time;
-    rcd.cloud     = laserCloudWorldRGB; // moves ownership of this-frame alloc
+    rcd.cloud = laserCloudWorldRGB; // moves ownership of this-frame alloc
     std::lock_guard<std::mutex> lk(bridge_->viz_rgb_cloud_mtx);
     if (bridge_->viz_rgb_cloud_queue.size() < livo::kVizRgbCloudQueueMax)
       bridge_->viz_rgb_cloud_queue.push(std::move(rcd));
@@ -1191,7 +1217,7 @@ void LIVMapper::publish_frame_world(VIOManagerPtr vio_manager) {
     PointCloudXYZI::Ptr outCloud(new PointCloudXYZI(*pcl_w_wait_pub));
     livo::CloudData cd;
     cd.timestamp = LidarMeasures.last_lio_update_time;
-    cd.cloud     = outCloud;
+    cd.cloud = outCloud;
     std::lock_guard<std::mutex> lk(bridge_->viz_cloud_mtx);
     if (bridge_->viz_cloud_queue.size() < livo::kVizCloudQueueMax)
       bridge_->viz_cloud_queue.push(std::move(cd));
@@ -1247,7 +1273,7 @@ void LIVMapper::publish_frame_world(VIOManagerPtr vio_manager) {
     }
     if ((pcl_wait_save->size() > 0 || pcl_wait_save_intensity->size() > 0) &&
         pcd_save_interval > 0 && scan_wait_num >= pcd_save_interval) {
-      string all_points_dir(string(string(ROOT_DIR) + "Log/pcd/") +
+      string all_points_dir(pcd_dir_ +
                             ss_time.str() + string(".pcd"));
 
       pcl::PCDWriter pcd_writer;
@@ -1281,7 +1307,7 @@ void LIVMapper::publish_frame_world(VIOManagerPtr vio_manager) {
     img_wait_num++;
 
     if (img_save_interval > 0 && img_wait_num >= img_save_interval) {
-      imwrite(string(string(ROOT_DIR) + "Log/image/") + ss_time.str() +
+      imwrite(string(root_dir + "Log/image/") + ss_time.str() +
                   string(".png"),
               vio_manager->img_rgb);
 
@@ -1292,6 +1318,33 @@ void LIVMapper::publish_frame_world(VIOManagerPtr vio_manager) {
                       << _state.pos_end[2] << " " << q.x() << " " << q.y()
                       << " " << q.z() << " " << q.w() << std::endl;
       img_wait_num = 0;
+    }
+  }
+
+  // -- Global map accumulation: append current world-frame scan, downsample
+  //    and publish at the configured rate on /livo2/global_map.
+  if (global_map_en_ && !pcl_w_wait_pub->empty()) {
+    *global_map_accum_ += *pcl_w_wait_pub;
+    double now = LidarMeasures.last_lio_update_time;
+    if (now - global_map_last_pub_time_ >= global_map_publish_interval_) {
+      global_map_last_pub_time_ = now;
+      // Downsample the accumulated buffer
+      PointCloudXYZI::Ptr filtered(new PointCloudXYZI());
+      pcl::VoxelGrid<PointType> vf;
+      vf.setLeafSize(global_map_filter_size_, global_map_filter_size_,
+                     global_map_filter_size_);
+      vf.setInputCloud(global_map_accum_);
+      vf.filter(*filtered);
+      // Replace accumulation buffer with the already-filtered cloud so memory
+      // doesn't grow unbounded between publishes.
+      global_map_accum_ = filtered;
+      // Push to bridge
+      livo::CloudData cd;
+      cd.timestamp = now;
+      cd.cloud = filtered;
+      std::lock_guard<std::mutex> lk(bridge_->global_map_mtx);
+      if (bridge_->global_map_queue.size() < livo::kGlobalMapQueueMax)
+        bridge_->global_map_queue.push(std::move(cd));
     }
   }
 
@@ -1310,11 +1363,12 @@ void LIVMapper::publish_visual_sub_map() {
   // Note: visual_sub_map is populated from vio_manager->visual_sub_map_cur
   // in the VIO handler (currently commented out pending camera availability).
   // When img_en=1 and that block is uncommented this function will stream live.
-  if (!visual_sub_map || visual_sub_map->empty()) return;
+  if (!visual_sub_map || visual_sub_map->empty())
+    return;
 
   livo::CloudData cd;
   cd.timestamp = LidarMeasures.last_lio_update_time;
-  cd.cloud     = visual_sub_map;
+  cd.cloud = visual_sub_map;
   std::lock_guard<std::mutex> lk(bridge_->visual_map_mtx);
   if (bridge_->visual_map_queue.size() < livo::kVisualMapQueueMax)
     bridge_->visual_map_queue.push(std::move(cd));
@@ -1322,25 +1376,26 @@ void LIVMapper::publish_visual_sub_map() {
 
 void LIVMapper::publish_effect_world(
     const std::vector<PointToPlane> &ptpl_list) {
-  if (ptpl_list.empty()) return;
+  if (ptpl_list.empty())
+    return;
 
-  // Build a cloud of matched LiDAR-to-plane correspondence points (world frame).
-  // Each point is a scan point that successfully matched a voxel plane in this
-  // EKF update step.  Streamer sends on /livo2/effect_points.
+  // Build a cloud of matched LiDAR-to-plane correspondence points (world
+  // frame). Each point is a scan point that successfully matched a voxel plane
+  // in this EKF update step.  Streamer sends on /livo2/effect_points.
   PointCloudXYZI::Ptr cloud(new PointCloudXYZI());
   cloud->reserve(ptpl_list.size());
   for (const PointToPlane &pp : ptpl_list) {
     pcl::PointXYZINormal pt;
-    pt.x         = static_cast<float>(pp.point_w_[0]);
-    pt.y         = static_cast<float>(pp.point_w_[1]);
-    pt.z         = static_cast<float>(pp.point_w_[2]);
+    pt.x = static_cast<float>(pp.point_w_[0]);
+    pt.y = static_cast<float>(pp.point_w_[1]);
+    pt.z = static_cast<float>(pp.point_w_[2]);
     pt.intensity = 1.0f;
     cloud->push_back(pt);
   }
 
   livo::CloudData cd;
   cd.timestamp = LidarMeasures.last_lio_update_time;
-  cd.cloud     = cloud;
+  cd.cloud = cloud;
   std::lock_guard<std::mutex> lk(bridge_->effect_cloud_mtx);
   if (bridge_->effect_cloud_queue.size() < livo::kEffectCloudQueueMax)
     bridge_->effect_cloud_queue.push(std::move(cd));
