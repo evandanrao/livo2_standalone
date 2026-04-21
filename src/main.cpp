@@ -3,6 +3,7 @@
 #include "fast_livo/LIVMapper.h"
 #include "fast_livo/bridge.hpp"
 #include "fast_livo/params.h"
+#include "fast_livo/planner.hpp"
 
 #include <csignal>
 #include <cstdio>
@@ -14,6 +15,7 @@ void lidar_driver_thread(livo::Bridge &bridge, const params::Params &p);
 void camera_driver_thread(livo::Bridge &bridge, const params::Params &p);
 void foxglove_streamer_thread(livo::Bridge &bridge, const params::Params &p);
 void lidar_publisher_thread(livo::Bridge &bridge, const params::Params &p);
+void goal_listener_thread(livo::Bridge &bridge);
 
 // Global bridge pointer for the SIGINT handler
 static livo::Bridge *g_bridge = nullptr;
@@ -26,9 +28,11 @@ static void sigint_handler(int) {
 
 static void print_usage(const char *prog) {
   fprintf(stderr,
-          "Usage: %s --config <livo2.yaml> --camera <camera.yaml>\n"
+          "Usage: %s --config <livo2.yaml> --camera <camera.yaml> [--desktop]\n"
           "  --config   path to livo2 parameter YAML\n"
           "  --camera   path to camera intrinsics YAML\n"
+          "  --desktop  dev-machine mode: save logs to ~/livo2/ instead of\n"
+          "             /media/internal_logs/livo2/\n"
           "  --help     print this message\n",
           prog);
 }
@@ -36,6 +40,7 @@ static void print_usage(const char *prog) {
 int main(int argc, char **argv) {
   std::string livo2_yaml;
   std::string camera_yaml;
+  bool desktop_mode = false;
 
   for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
@@ -43,6 +48,8 @@ int main(int argc, char **argv) {
       livo2_yaml = argv[++i];
     } else if ((arg == "--camera" || arg == "-k") && i + 1 < argc) {
       camera_yaml = argv[++i];
+    } else if (arg == "--desktop") {
+      desktop_mode = true;
     } else if (arg == "--help" || arg == "-h") {
       print_usage(argv[0]);
       return 0;
@@ -68,6 +75,12 @@ int main(int argc, char **argv) {
     return 1;
   }
 
+  if (desktop_mode) {
+    const char *home = getenv("HOME");
+    p.log.log_dir = std::string(home ? home : "/tmp") + "/livo2";
+    fprintf(stderr, "[main] Desktop mode: logs → %s\n", p.log.log_dir.c_str());
+  }
+
   // Create inter-thread bridge
   livo::Bridge bridge;
   g_bridge = &bridge;
@@ -85,6 +98,11 @@ int main(int argc, char **argv) {
   std::thread t_camera(camera_driver_thread, std::ref(bridge), std::cref(p));
   std::thread t_fox(foxglove_streamer_thread, std::ref(bridge), std::cref(p));
   std::thread t_udp(lidar_publisher_thread, std::ref(bridge), std::cref(p));
+  std::thread t_goal(goal_listener_thread, std::ref(bridge));
+
+  // Start EGO-Planner thread (uses default PlannerParams — override via YAML)
+  livo::Planner planner(bridge, p.planner);
+  std::thread t_planner(&livo::Planner::run, &planner);
 
   // SLAM runs on this thread (blocking until bridge.running == false)
   slam.run();
@@ -96,6 +114,8 @@ int main(int argc, char **argv) {
   t_camera.join();
   t_fox.join();
   t_udp.join();
+  t_goal.join();
+  t_planner.join();
 
   fprintf(stdout, "[main] Shutdown complete.\n");
   return 0;

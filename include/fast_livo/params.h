@@ -3,6 +3,7 @@
 // Sub-structs are expanded as needed by each stage.
 // load() is fully implemented in Stage 4; for now it just stores file paths.
 #pragma once
+#include <array>
 #include <string>
 #include <vector>
 
@@ -14,17 +15,17 @@ struct LidarParams {
   int ptc_port = 9347;
   int thread_num = 2;
   std::string correction_file; // path to .csv (empty = download from lidar)
-  std::string firetimes_file =  // JT128 bundled CSV; overridable via yaml
+  std::string firetimes_file = // JT128 bundled CSV; overridable via yaml
 #ifdef HESAI_FIRETIMES_FILE
       HESAI_FIRETIMES_FILE
 #else
       ""
 #endif
       ;
-  int n_scans = 128;           // JT128: use all rings
-  double blind = 0.01;         // minimum range, metres
-  double blind_sqr = 0.0001;   // blind^2, pre-computed
-  double time_offset = 0.0;    // lidar_time_offset (seconds)
+  int n_scans = 128;         // JT128: use all rings
+  double blind = 0.01;       // minimum range, metres
+  double blind_sqr = 0.0001; // blind^2, pre-computed
+  double time_offset = 0.0;  // lidar_time_offset (seconds)
 };
 
 struct ImuParams {
@@ -70,7 +71,8 @@ struct SlamParams {
   int pcd_save_interval = -1;
   bool pcd_save_en = false;
   int pcd_save_type = 0;
-  std::string pcd_dir = "/media/internal_logs/pcd";  // directory for saved .pcd files
+  std::string pcd_dir =
+      "/media/internal_logs/pcd"; // directory for saved .pcd files
   bool img_save_en = false;
   int img_save_interval = 1;
   bool colmap_output_en = false;
@@ -94,7 +96,7 @@ struct SlamParams {
   // Global map accumulation channel (/livo2/global_map)
   bool global_map_en = false;
   double global_map_filter_size = 0.3; // voxel grid leaf size (metres)
-  double global_map_publish_hz = 0.2; // publish rate (Hz); 0.2 = every 5 s
+  double global_map_publish_hz = 0.2;  // publish rate (Hz); 0.2 = every 5 s
   bool dense_map_en = false;
   bool verbose_en = false;
   // Camera YAML path (used in initializeComponents)
@@ -113,10 +115,65 @@ struct SlamParams {
   double sliding_thresh = 1.0;
 };
 
+struct PlannerParams {
+  // FSM
+  double replan_thresh = 1.0;
+  double planning_horizon = 6.0;
+  double emergency_time = 1.0;
+  bool enable_fail_safe = true;
+
+  // Manager / trajectory
+  double max_vel = 3.0;
+  double max_acc = 4.0;
+  double feasibility_tolerance = 0.0;
+  double polyTraj_piece_length = 1.5;
+  bool use_multitopology_trajs = false;
+  int drone_id = -1;
+
+  // Optimizer
+  int cps_num_prePiece = 3;
+  double max_jer = 9.0;
+  double wei_obs = 10000.0;
+  double wei_obs_soft = 3000.0;
+  double wei_feas = 10000.0;
+  double wei_sqrvar = 10.0;
+  double wei_time = 10.0;
+  double obs_clearance = 0.3;
+  double obs_clearance_soft = 1.5;
+
+  // Grid map
+  double grid_resolution = 0.1;
+  double local_range_xy = 5.5;
+  double local_range_z = 3.0;
+  double obstacles_inflation = 0.3;
+  double p_hit = 0.70;
+  double p_miss = 0.35;
+  double p_min = 0.12;
+  double p_max = 0.97;
+  double p_occ = 0.80;
+  double fading_time = 1000.0;
+  double min_ray_length = 0.1;
+  double odom_depth_timeout = 1.0;
+  bool enable_virtual_wall = false;
+  double virtual_ceil = 1.0;
+  double virtual_ground = -0.1;
+
+  // Preset waypoint flight mode
+  int target_type = 0;               // 0 = MANUAL_TARGET, 1 = PRESET_TARGET
+  bool realworld_experiment = false; // if true, wait for trigger before first move
+  int waypoint_num = 0;
+  std::vector<std::array<double, 3>> waypoints; // list of [x,y,z] waypoints
+
+  // Trajectory server yaw control
+  double time_forward = 1.0;                    // seconds look-ahead for yaw computation
+  bool enable_ground_height_measurement = false; // scan occupancy grid downward to find floor
+};
+
 struct Params {
   LidarParams lidar;
   ImuParams imu;
   SlamParams slam;
+  PlannerParams planner;
   std::string livo2_yaml;
   std::string camera_yaml; // top-level shortcut (also in slam.camera_yaml)
   // Logging

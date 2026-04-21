@@ -26,10 +26,11 @@ time_offset:
   lidar_time_offset: 0.0
 
 preprocess:
-  hilti_en: false
+  hilti_en: 0
   point_filter_num: 3
   filter_size_surf: 0.3
-  feature_extract_enabled: false  # true = edge/plane features; false = use all points (faster)
+  # feature_extract_enabled: 1 = edge/plane features; 0 = use all points (faster)
+  feature_extract_enabled: 0
   scan_line: 128
   blind: 0.1
 
@@ -41,21 +42,21 @@ vio:
   patch_pyrimid_level: 4
   grid_size: 5            # pixel spacing of VIO feature grid
   grid_n_height: 17       # number of grid rows for patch tracking
-  normal_en: true
-  raycast_en: false
-  inverse_composition_en: false
-  exposure_estimate_en: true
+  normal_en: 1
+  raycast_en: 0
+  inverse_composition_en: 0
+  exposure_estimate_en: 1
   inv_expo_cov: 0.1
 
 imu:
-  imu_en: true
+  imu_en: 1
   imu_int_frame: 30
   acc_cov: 0.1
   gyr_cov: 0.1
   b_acc_cov: 0.0001
   b_gyr_cov: 0.0001
-  gravity_est_en: true    # estimate gravity direction during init
-  ba_bg_est_en: true      # estimate IMU bias during state estimation
+  gravity_est_en: 1    # estimate gravity direction during init
+  ba_bg_est_en: 1      # estimate IMU bias during state estimation
 
 lio:
   max_iterations: 5
@@ -68,56 +69,118 @@ lio:
   layer_init_num: [5, 5, 5, 5, 5]
 
 local_map:
-  map_sliding_en: true
+  map_sliding_en: 1
   half_map_size: 50
   sliding_thresh: 1.0
 
 uav:
-  imu_rate_odom: true   # enables ~200 Hz IMU-propagated odom on /livo2/imu_odom
-  gravity_align_en: true
+  imu_rate_odom: 1   # enables ~200 Hz IMU-propagated odom on /livo2/imu_odom
+  gravity_align_en: 1
 
 publish:
-  dense_map_en: true
-  pub_effect_point_en: true   # matched feature points on /livo2/effect_points
-  pub_plane_en: true          # voxel plane centroids on /livo2/voxel_map
+  dense_map_en: 1
+  pub_effect_point_en: 1   # matched feature points on /livo2/effect_points
+  pub_plane_en: 1          # voxel plane centroids on /livo2/voxel_map
   pub_scan_num: 1
   blind_rgb_points: 0.0
 
 global_map:
-  enable: true           # accumulated downsampled map on /livo2/global_map
+  enable: 1           # accumulated downsampled map on /livo2/global_map
   filter_size: 0.3       # voxel grid leaf size (m) applied before each publish
   publish_hz: 0.2        # publish rate (Hz); 0.2 = every 5 seconds
 
 debug:
-  verbose_en: false   # set true to print per-scan timing table and LIO stats
+  # verbose_en: set to 1 to print per-scan timing table and LIO stats
+  verbose_en: 0
   plot_time: -10.0    # suppress timing output until this many seconds elapsed (-10 = always)
   frame_cnt: 6        # IMU propagation warm-up frame count
 
 evo:
   seq_name: "hesai_jt128"
-  pose_output_en: false
+  pose_output_en: 0
 
 pcd_save:
-  pcd_save_en: true  pcd_dir: "/media/internal_logs/pcd"  # directory for saved .pcd files  interval: -1          # scans between saves (-1 = save at shutdown only)
+  pcd_save_en: 1
+  pcd_dir: "/media/internal_logs/pcd"  # directory for saved .pcd files
+  interval: -1          # scans between saves (-1 = save at shutdown only)
   type: 0               # 0=XYZI  1=XYZRGB
   filter_size_pcd: 0.5
-  colmap_output_en: false
+  colmap_output_en: 0
 
 image_save:
-  img_save_en: false
+  img_save_en: 0
   interval: 1           # save every N VIO frames
 
 # ─── Logging ──────────────────────────────────────────────────────────────────
 log:
   log_dir: "/media/internal_logs/"
-  enable_mcap: true
+  enable_mcap: 1
   mcap_max_mb: 2048     # rotate MCAP file when it exceeds this size (MB)
 
 # ─── Foxglove streaming ───────────────────────────────────────────────────────
 foxglove:
-  enable_ws: true
-  enable_mcap: true
+  enable_ws: 1
+  enable_mcap: 1
   ws_port: 8765
+
+# ─── EGO-Planner ──────────────────────────────────────────────────────────────
+planner:
+  # FSM
+  replan_thresh: 1.0
+  planning_horizon: 6.0
+  emergency_time: 1.0
+  enable_fail_safe: 1
+
+  # Waypoint mode: 0 = MANUAL (Foxglove /planner/goal), 1 = PRESET (fly list below)
+  target_type: 0
+  # realworld_experiment: if 1, wait for /planner/trigger before first move
+  realworld_experiment: 0
+
+  # Trajectory server yaw look-ahead
+  time_forward: 1.0
+  # Scan occupancy grid downward every 2 s to estimate ground plane height.
+  # Disable in indoor/confined environments where the grid bottom is unreliable.
+  enable_ground_height_measurement: 0
+
+  # Pre-set waypoints (used when target_type: 1); list of [x, y, z] metres
+  waypoints: []  # e.g. [[0,0,1.5], [2,0,1.5], [2,2,1.5], [0,2,1.5]]
+
+  # Trajectory manager
+  max_vel: 3.0
+  max_acc: 4.0
+  feasibility_tolerance: 0.0
+  polyTraj_piece_length: 1.5
+  use_multitopology_trajs: 0
+  drone_id: -1
+
+  # Optimizer
+  cps_num_prePiece: 3
+  max_jer: 9.0
+  wei_obs: 10000.0
+  wei_obs_soft: 3000.0
+  wei_feas: 10000.0
+  wei_sqrvar: 10.0
+  wei_time: 10.0
+  obs_clearance: 0.3
+  obs_clearance_soft: 1.5
+
+  # Grid map
+  grid_resolution: 0.1
+  local_range_xy: 5.5
+  local_range_z: 3.0
+  obstacles_inflation: 0.3
+  p_hit: 0.70
+  p_miss: 0.35
+  p_min: 0.12
+  p_max: 0.97
+  p_occ: 0.80
+  fading_time: 1000.0
+  min_ray_length: 0.3        # metres; points closer than this to drone are filtered
+  odom_depth_timeout: 1.0
+  enable_virtual_wall: 0
+  virtual_ceil: 1.0
+  virtual_ground: -0.1
+
   cloud_hz: 5           # max point cloud publish rate
   image_hz: 15          # max image publish rate
 

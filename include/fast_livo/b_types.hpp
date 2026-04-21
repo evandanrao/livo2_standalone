@@ -5,6 +5,7 @@
 #include <Eigen/Core>
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <opencv2/opencv.hpp>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
@@ -46,6 +47,48 @@ struct PoseData {
   Eigen::Matrix3d rotation; // body-in-world (SO3)
   Eigen::Vector3d position; // body-in-world, metres
   Eigen::Vector3d velocity; // body-in-world, m/s
+};
+
+// Sampled trajectory produced by EGO-Planner local optimiser.
+// Waypoints are sampled at ~10 Hz from the minimum-jerk polynomial.
+struct TrajectoryData {
+  double timestamp;                       // wall-clock time of generation
+  double start_time;                      // trajectory time origin (ego_now_s)
+  double duration;                        // total trajectory duration (s)
+  std::vector<Eigen::Vector3d> waypoints; // sampled positions (10 Hz)
+  std::vector<double> times;              // sample times from start_time
+};
+
+// Inflated-occupancy voxel centres from EGO-Planner GridMap.
+struct OccupancyViz {
+  double timestamp;
+  std::vector<Eigen::Vector3f> occupied_voxels; // world-frame xyz (float)
+};
+
+// Goal command sent from external sources (Foxglove WebSocket or UDP).
+struct Goal {
+  float x, y, z;
+};
+
+// Visualization path from EGO-Planner.
+// label is one of: "goal", "init", "optimal", "failed", "astar", "global"
+struct PlannerPath {
+  double timestamp;
+  std::string label;
+  std::vector<Eigen::Vector3d> waypoints;
+};
+
+// Position command sampled at 50 Hz from the active trajectory.
+// Mirrors quadrotor_msgs::PositionCommand (ROS1 traj_server output).
+struct PositionCmd {
+  double timestamp;
+  Eigen::Vector3d position;
+  Eigen::Vector3d velocity;
+  Eigen::Vector3d acceleration;
+  Eigen::Vector3d jerk;
+  double yaw;     // radians
+  double yaw_dot; // rad/s
+  int traj_id;
 };
 
 } // namespace livo

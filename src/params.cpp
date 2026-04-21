@@ -20,6 +20,26 @@ static T readOr(const cv::FileNode &node, const std::string &key, T def) {
   return val;
 }
 
+// OpenCV reads YAML `true`/`false` as STRING nodes, not INT/REAL.
+// Specialise bool to handle that correctly.
+template <>
+bool readOr<bool>(const cv::FileNode &node, const std::string &key, bool def) {
+  cv::FileNode n = node[key];
+  if (n.empty())
+    return def;
+  if (n.isInt())
+    return static_cast<int>(n) != 0;
+  if (n.isReal())
+    return static_cast<double>(n) != 0.0;
+  // String node: OpenCV stores "true" / "false"
+  std::string s = static_cast<std::string>(n);
+  if (s == "true" || s == "1" || s == "yes")
+    return true;
+  if (s == "false" || s == "0" || s == "no")
+    return false;
+  return def;
+}
+
 static std::vector<double> readVecD(const cv::FileNode &node,
                                     const std::string &key,
                                     const std::vector<double> &def) {
@@ -235,8 +255,7 @@ Params load(const std::string &livo2_yaml, const std::string &camera_yaml) {
   {
     cv::FileNode n = fs["global_map"];
     if (!n.empty()) {
-      p.slam.global_map_en =
-          readOr<bool>(n, "enable", p.slam.global_map_en);
+      p.slam.global_map_en = readOr<bool>(n, "enable", p.slam.global_map_en);
       p.slam.global_map_filter_size =
           readOr<double>(n, "filter_size", p.slam.global_map_filter_size);
       p.slam.global_map_publish_hz =
@@ -323,6 +342,99 @@ Params load(const std::string &livo2_yaml, const std::string &camera_yaml) {
       p.foxglove.enable_ws = readOr<bool>(n, "enable_ws", p.foxglove.enable_ws);
       p.foxglove.enable_mcap =
           readOr<bool>(n, "enable_mcap", p.foxglove.enable_mcap);
+    }
+  }
+
+  // planner:
+  {
+    cv::FileNode n = fs["planner"];
+    if (!n.empty()) {
+      // FSM
+      p.planner.replan_thresh =
+          readOr<double>(n, "replan_thresh", p.planner.replan_thresh);
+      p.planner.planning_horizon =
+          readOr<double>(n, "planning_horizon", p.planner.planning_horizon);
+      p.planner.emergency_time =
+          readOr<double>(n, "emergency_time", p.planner.emergency_time);
+      p.planner.enable_fail_safe =
+          readOr<bool>(n, "enable_fail_safe", p.planner.enable_fail_safe);
+      // Preset target mode
+      p.planner.target_type =
+          readOr<int>(n, "target_type", p.planner.target_type);
+      p.planner.realworld_experiment = readOr<bool>(
+          n, "realworld_experiment", p.planner.realworld_experiment);
+      // Traj server
+      p.planner.time_forward =
+          readOr<double>(n, "time_forward", p.planner.time_forward);
+      p.planner.enable_ground_height_measurement =
+          readOr<bool>(n, "enable_ground_height_measurement",
+                       p.planner.enable_ground_height_measurement);
+      // Manager
+      p.planner.max_vel = readOr<double>(n, "max_vel", p.planner.max_vel);
+      p.planner.max_acc = readOr<double>(n, "max_acc", p.planner.max_acc);
+      p.planner.feasibility_tolerance = readOr<double>(
+          n, "feasibility_tolerance", p.planner.feasibility_tolerance);
+      p.planner.polyTraj_piece_length = readOr<double>(
+          n, "polyTraj_piece_length", p.planner.polyTraj_piece_length);
+      p.planner.use_multitopology_trajs = readOr<bool>(
+          n, "use_multitopology_trajs", p.planner.use_multitopology_trajs);
+      p.planner.drone_id = readOr<int>(n, "drone_id", p.planner.drone_id);
+      // Optimizer
+      p.planner.cps_num_prePiece =
+          readOr<int>(n, "cps_num_prePiece", p.planner.cps_num_prePiece);
+      p.planner.max_jer = readOr<double>(n, "max_jer", p.planner.max_jer);
+      p.planner.wei_obs = readOr<double>(n, "wei_obs", p.planner.wei_obs);
+      p.planner.wei_obs_soft =
+          readOr<double>(n, "wei_obs_soft", p.planner.wei_obs_soft);
+      p.planner.wei_feas = readOr<double>(n, "wei_feas", p.planner.wei_feas);
+      p.planner.wei_sqrvar =
+          readOr<double>(n, "wei_sqrvar", p.planner.wei_sqrvar);
+      p.planner.wei_time = readOr<double>(n, "wei_time", p.planner.wei_time);
+      p.planner.obs_clearance =
+          readOr<double>(n, "obs_clearance", p.planner.obs_clearance);
+      p.planner.obs_clearance_soft =
+          readOr<double>(n, "obs_clearance_soft", p.planner.obs_clearance_soft);
+      // Grid map
+      p.planner.grid_resolution =
+          readOr<double>(n, "grid_resolution", p.planner.grid_resolution);
+      p.planner.local_range_xy =
+          readOr<double>(n, "local_range_xy", p.planner.local_range_xy);
+      p.planner.local_range_z =
+          readOr<double>(n, "local_range_z", p.planner.local_range_z);
+      p.planner.obstacles_inflation = readOr<double>(
+          n, "obstacles_inflation", p.planner.obstacles_inflation);
+      p.planner.p_hit = readOr<double>(n, "p_hit", p.planner.p_hit);
+      p.planner.p_miss = readOr<double>(n, "p_miss", p.planner.p_miss);
+      p.planner.p_min = readOr<double>(n, "p_min", p.planner.p_min);
+      p.planner.p_max = readOr<double>(n, "p_max", p.planner.p_max);
+      p.planner.p_occ = readOr<double>(n, "p_occ", p.planner.p_occ);
+      p.planner.fading_time =
+          readOr<double>(n, "fading_time", p.planner.fading_time);
+      p.planner.min_ray_length =
+          readOr<double>(n, "min_ray_length", p.planner.min_ray_length);
+      p.planner.odom_depth_timeout =
+          readOr<double>(n, "odom_depth_timeout", p.planner.odom_depth_timeout);
+      p.planner.enable_virtual_wall =
+          readOr<bool>(n, "enable_virtual_wall", p.planner.enable_virtual_wall);
+      p.planner.virtual_ceil =
+          readOr<double>(n, "virtual_ceil", p.planner.virtual_ceil);
+      p.planner.virtual_ground =
+          readOr<double>(n, "virtual_ground", p.planner.virtual_ground);
+      // Waypoints (list of [x, y, z] sequences)
+      cv::FileNode wpts = n["waypoints"];
+      if (!wpts.empty() && wpts.isSeq()) {
+        p.planner.waypoints.clear();
+        for (auto it = wpts.begin(); it != wpts.end(); ++it) {
+          if ((*it).isSeq()) {
+            std::array<double, 3> wp = {{0.0, 0.0, 0.0}};
+            int j = 0;
+            for (auto jt = (*it).begin(); jt != (*it).end() && j < 3; ++jt, ++j)
+              wp[j] = static_cast<double>(*jt);
+            p.planner.waypoints.push_back(wp);
+          }
+        }
+        p.planner.waypoint_num = static_cast<int>(p.planner.waypoints.size());
+      }
     }
   }
 

@@ -5,6 +5,9 @@
 #include "fast_livo/params.h"
 
 #include <chrono>
+#include <cmath>
+#include <limits>
+#include <map>
 #include <thread>
 
 #ifdef BUILD_FOXGLOVE
@@ -14,9 +17,11 @@
 #include <foxglove/websocket.hpp>
 
 #include <cstdint>
+#include <cstring>
 #include <ctime>
 #include <optional>
 #include <queue>
+#include <set>
 #include <string>
 #include <sys/stat.h> // mkdir for GCC 7 (no <filesystem>)
 
@@ -236,6 +241,102 @@ void foxglove_streamer_thread(livo::Bridge &bridge, const params::Params &p) {
     opts.name = "livo2";
     opts.host = "0.0.0.0";
     opts.port = static_cast<uint16_t>(p.foxglove.ws_port);
+
+    // ---- Enable bidirectional client-publish for goal injection ----
+    opts.capabilities = foxglove::WebSocketServerCapabilities::ClientPublish;
+    opts.supported_encodings = {"json"};
+
+    // Track which (client_id, channel_id) pairs correspond to known topics.
+    // Maps GoalKey → topic string so one dispatcher handles all inbound topics.
+    auto client_ch_mtx = std::make_shared<std::mutex>();
+    using GoalKey = std::pair<uint32_t, uint32_t>;
+    auto client_ch_map = std::make_shared<std::map<GoalKey, std::string>>();
+
+    opts.callbacks.onClientAdvertise =
+        [client_ch_map, client_ch_mtx](uint32_t client_id,
+                                       const foxglove::ClientChannel &ch) {
+          const std::string topic(ch.topic.data(), ch.topic.size());
+          if (topic == "/planner/goal" || topic == "/planner/trigger" ||
+              topic == "/planner/mandatory_stop") {
+            std::lock_guard<std::mutex> lk(*client_ch_mtx);
+            (*client_ch_map)[{client_id, ch.id}] = topic;
+            fprintf(stdout,
+                    "[foxglove] Client %u advertised %s (ch %u)\n",
+                    client_id, topic.c_str(), ch.id);
+          }
+        };
+
+    opts.callbacks.onClientUnadvertise =
+        [client_ch_map, client_ch_mtx](uint32_t client_id,
+                                       uint32_t client_channel_id) {
+          std::lock_guard<std::mutex> lk(*client_ch_mtx);
+          client_ch_map->erase({client_id, client_channel_id});
+        };
+
+    // Shared pointer to bridge for use inside the lambda
+    livo::Bridge *bridge_ptr = &bridge;
+    // Shared pointer to planner to call setTrigger/mandatoryStop
+    // (planner lives in main's scope; bridge.running guards its lifetime)
+    opts.callbacks.onMessageData =
+        [bridge_ptr, client_ch_map, client_ch_mtx](
+            uint32_t client_id, uint32_t client_channel_id,
+            const std::byte *data, size_t data_len) {
+          std::string topic;
+          {
+            std::lock_guard<std::mutex> lk(*client_ch_mtx);
+            auto it = client_ch_map->find({client_id, client_channel_id});
+            if (it == client_ch_map->end())
+              return;
+            topic = it->second;
+          }
+
+          if (topic == "/planner/goal") {
+            // Parse JSON: {"x": <float>, "y": <float>, "z": <float>}
+            std::string json(reinterpret_cast<const char *>(data), data_len);
+            const char *s = json.c_str();
+            const char *xp = strstr(s, "\"x\"");
+            const char *yp = strstr(s, "\"y\"");
+            const char *zp = strstr(s, "\"z\"");
+            if (!xp || !yp || !zp)
+              return;
+            xp = strchr(xp + 3, ':');
+            yp = strchr(yp + 3, ':');
+            zp = strchr(zp + 3, ':');
+            if (!xp || !yp || !zp)
+              return;
+            float x = std::strtof(xp + 1, nullptr);
+            float y = std::strtof(yp + 1, nullptr);
+            float z = std::strtof(zp + 1, nullptr);
+            fprintf(stdout,
+                    "[foxglove] /planner/goal: (%.2f, %.2f, %.2f)\n", x, y, z);
+            livo::Goal goal{x, y, z};
+            std::lock_guard<std::mutex> lk(bridge_ptr->planner_goal_mtx);
+            while (bridge_ptr->planner_goal_queue.size() >=
+                   livo::kPlannerGoalQueueMax)
+              bridge_ptr->planner_goal_queue.pop();
+            bridge_ptr->planner_goal_queue.push(goal);
+
+          } else if (topic == "/planner/trigger") {
+            // Any message on this topic arms the planner.
+            // Push a special sentinel goal {NaN,NaN,NaN} to signal trigger.
+            livo::Goal trigger_sentinel{std::numeric_limits<float>::quiet_NaN(),
+                                       std::numeric_limits<float>::quiet_NaN(),
+                                       std::numeric_limits<float>::quiet_NaN()};
+            std::lock_guard<std::mutex> lk(bridge_ptr->planner_goal_mtx);
+            // Prepend sentinel by clearing and re-pushing — we use NaN as
+            // "trigger" signal recognised in Planner::run().
+            bridge_ptr->planner_goal_queue.push(trigger_sentinel);
+
+          } else if (topic == "/planner/mandatory_stop") {
+            // Any message forces emergency stop.
+            livo::Goal stop_sentinel{-std::numeric_limits<float>::infinity(),
+                                    -std::numeric_limits<float>::infinity(),
+                                    -std::numeric_limits<float>::infinity()};
+            std::lock_guard<std::mutex> lk(bridge_ptr->planner_goal_mtx);
+            bridge_ptr->planner_goal_queue.push(stop_sentinel);
+          }
+        };
+
     auto res = foxglove::WebSocketServer::create(std::move(opts));
     if (res.has_value()) {
       ws_server = std::move(res.value());
@@ -279,6 +380,37 @@ void foxglove_streamer_thread(livo::Bridge &bridge, const params::Params &p) {
   // Accumulated downsampled global map — refreshed at global_map/publish_hz.
   auto global_map_ch =
       foxglove::messages::PointCloudChannel::create("/livo2/global_map")
+          .value();
+  // EGO-Planner: sampled trajectory waypoints (PosesInFrame).
+  auto planner_traj_ch =
+      foxglove::messages::PosesInFrameChannel::create("/planner/trajectory")
+          .value();
+  // EGO-Planner: inflated occupancy voxel centres (PointCloud xyz float).
+  auto planner_occ_ch =
+      foxglove::messages::PointCloudChannel::create("/planner/occupancy")
+          .value();
+  // EGO-Planner: visualization paths (goal, init, optimal, failed, astar, global).
+  auto planner_goal_viz_ch =
+      foxglove::messages::PosesInFrameChannel::create("/planner/viz/goal")
+          .value();
+  auto planner_global_ch =
+      foxglove::messages::PosesInFrameChannel::create("/planner/viz/global")
+          .value();
+  auto planner_init_ch =
+      foxglove::messages::PosesInFrameChannel::create("/planner/viz/init")
+          .value();
+  auto planner_optimal_ch =
+      foxglove::messages::PosesInFrameChannel::create("/planner/viz/optimal")
+          .value();
+  auto planner_failed_ch =
+      foxglove::messages::PosesInFrameChannel::create("/planner/viz/failed")
+          .value();
+  auto planner_astar_ch =
+      foxglove::messages::PosesInFrameChannel::create("/planner/viz/astar")
+          .value();
+  // EGO-Planner: 50 Hz position command (traj server output).
+  auto planner_cmd_ch =
+      foxglove::messages::OdometryChannel::create("/planner/position_cmd")
           .value();
   auto camcal_ch =
       foxglove::messages::CameraCalibrationChannel::create("/livo2/camera_info")
@@ -452,6 +584,65 @@ void foxglove_streamer_thread(livo::Bridge &bridge, const params::Params &p) {
       }
     }
 
+    // ---- Drain planner_traj_queue (EGO-Planner trajectory waypoints) ----
+    {
+      std::queue<livo::TrajectoryData> local;
+      {
+        std::lock_guard<std::mutex> lk(bridge.planner_traj_mtx);
+        std::swap(local, bridge.planner_traj_queue);
+      }
+      if (!local.empty()) {
+        while (local.size() > 1)
+          local.pop();
+        const auto &td = local.front();
+        using namespace foxglove::messages;
+        PosesInFrame msg;
+        msg.frame_id = "map";
+        msg.timestamp = to_ts(td.timestamp);
+        msg.poses.reserve(td.waypoints.size());
+        for (size_t i = 0; i < td.waypoints.size(); ++i) {
+          Pose ps;
+          ps.position = Vector3{td.waypoints[i](0), td.waypoints[i](1),
+                                td.waypoints[i](2)};
+          ps.orientation = Quaternion{0, 0, 0, 1}; // identity (x,y,z,w)
+          msg.poses.push_back(ps);
+        }
+        planner_traj_ch.log(msg, now_ns());
+      }
+    }
+
+    // ---- Drain planner_occ_queue (EGO-Planner occupancy voxels) ----
+    {
+      std::queue<livo::OccupancyViz> local;
+      {
+        std::lock_guard<std::mutex> lk(bridge.planner_occ_mtx);
+        std::swap(local, bridge.planner_occ_queue);
+      }
+      if (!local.empty()) {
+        while (local.size() > 1)
+          local.pop();
+        const auto &ov = local.front();
+        using namespace foxglove::messages;
+        PointCloud msg;
+        msg.frame_id = "map";
+        msg.timestamp = to_ts(ov.timestamp);
+        msg.point_stride = 12; // 3× float32
+        msg.fields = {
+            {"x", 0, PackedElementField::NumericType::FLOAT32},
+            {"y", 4, PackedElementField::NumericType::FLOAT32},
+            {"z", 8, PackedElementField::NumericType::FLOAT32},
+        };
+        const size_t n = ov.occupied_voxels.size();
+        msg.data.resize(n * 12);
+        for (size_t i = 0; i < n; ++i) {
+          float buf[3] = {ov.occupied_voxels[i](0), ov.occupied_voxels[i](1),
+                          ov.occupied_voxels[i](2)};
+          std::memcpy(msg.data.data() + i * 12, buf, 12);
+        }
+        planner_occ_ch.log(msg, now_ns());
+      }
+    }
+
     // ---- Drain viz_img_queue (feature-overlay image, rate-limited) ----
     if (image_limiter.ready()) {
       std::queue<livo::ImageData> local;
@@ -463,6 +654,78 @@ void foxglove_streamer_thread(livo::Bridge &bridge, const params::Params &p) {
         while (local.size() > 1)
           local.pop();
         publish_image(img_ch, local.front());
+      }
+    }
+
+    // ---- Drain planner_viz_queue (goal, init, optimal, failed, astar, global, ground_height) ----
+    {
+      // Collect latest per-label (drop stale frames of same label)
+      std::map<std::string, livo::PlannerPath> latest_by_label;
+      {
+        std::queue<livo::PlannerPath> local;
+        std::lock_guard<std::mutex> lk(bridge.planner_viz_mtx);
+        std::swap(local, bridge.planner_viz_queue);
+        while (!local.empty()) {
+          latest_by_label[local.front().label] = std::move(local.front());
+          local.pop();
+        }
+      }
+      for (auto &kv : latest_by_label) {
+        const auto &pp = kv.second;
+        using namespace foxglove::messages;
+        PosesInFrame msg;
+        msg.frame_id = "map";
+        msg.timestamp = to_ts(pp.timestamp);
+        msg.poses.reserve(pp.waypoints.size());
+        for (const auto &w : pp.waypoints) {
+          Pose ps;
+          ps.position = Vector3{w(0), w(1), w(2)};
+          ps.orientation = Quaternion{0, 0, 0, 1};
+          msg.poses.push_back(ps);
+        }
+        const std::string &lbl = kv.first;
+        if (lbl == "goal")
+          planner_goal_viz_ch.log(msg, now_ns());
+        else if (lbl == "global")
+          planner_global_ch.log(msg, now_ns());
+        else if (lbl == "init")
+          planner_init_ch.log(msg, now_ns());
+        else if (lbl == "optimal")
+          planner_optimal_ch.log(msg, now_ns());
+        else if (lbl == "failed")
+          planner_failed_ch.log(msg, now_ns());
+        else if (lbl == "astar")
+          planner_astar_ch.log(msg, now_ns());
+        // "ground_height" is a single point — reuse planner_goal_viz_ch is OK
+        // but publish on a dedicated OdometryChannel would be cleaner; for now
+        // we just skip it (it's an internal diagnostic, not primary viz).
+      }
+    }
+
+    // ---- Drain planner_cmd_queue (50 Hz traj server position commands) ----
+    {
+      std::queue<livo::PositionCmd> local;
+      {
+        std::lock_guard<std::mutex> lk(bridge.planner_cmd_mtx);
+        std::swap(local, bridge.planner_cmd_queue);
+      }
+      while (!local.empty()) {
+        const auto &cmd = local.front();
+        using namespace foxglove::messages;
+        // Encode yaw as Z-axis rotation quaternion
+        double half_yaw = cmd.yaw * 0.5;
+        double sin_h = std::sin(half_yaw), cos_h = std::cos(half_yaw);
+        Odometry msg;
+        msg.timestamp = to_ts(cmd.timestamp);
+        msg.frame_id = "map";
+        msg.body_frame_id = "cmd";
+        msg.pose = Pose{
+            Vector3{cmd.position(0), cmd.position(1), cmd.position(2)},
+            Quaternion{0.0, 0.0, sin_h, cos_h}};
+        msg.linear_velocity =
+            Vector3{cmd.velocity(0), cmd.velocity(1), cmd.velocity(2)};
+        planner_cmd_ch.log(msg, now_ns());
+        local.pop();
       }
     }
 

@@ -40,29 +40,31 @@ LIVMapper::LIVMapper(livo::Bridge &bridge, const params::Params &p)
   global_map_accum_.reset(new PointCloudXYZI());
   voxelmap_manager.reset(new VoxelMapManager(voxel_config, voxel_map));
   vio_manager.reset(new VIOManager());
-  root_dir = ROOT_DIR;
-  // pcd_stem_: timestamped path prefix in the same dir as the MCAP file.
-  // e.g. /media/internal_logs/livo2/livo2_2026-04-19_15-00-00
-  // Produces: pcd_stem_ + "_raw.pcd" and pcd_stem_ + "_downsampled.pcd"
+  // root_dir = log_dir: all output files (Log/, PCDs, MCAP) go to the same
+  // directory.  On Jetson this is /media/internal_logs/livo2/; on desktop
+  // (--desktop flag) it is ~/livo2/.
+  root_dir = p.log.log_dir;
   auto mkdirp = [](const std::string &path) {
     if (system(("mkdir -p " + path).c_str())) {
       fprintf(stderr, "[LIVMapper] mkdir -p %s failed\n", path.c_str());
     }
   };
   {
-    std::string log_dir = p.log.log_dir;
-    if (!log_dir.empty() && log_dir.back() == '/') log_dir.pop_back();
+    std::string log_dir = root_dir;
+    if (!log_dir.empty() && log_dir.back() == '/')
+      log_dir.pop_back();
     mkdirp(log_dir);
     char ts[64];
     auto t = std::time(nullptr);
-    std::strftime(ts, sizeof(ts), "livo2_%Y-%m-%d_%H-%M-%S", std::localtime(&t));
+    std::strftime(ts, sizeof(ts), "livo2_%Y-%m-%d_%H-%M-%S",
+                  std::localtime(&t));
     pcd_stem_ = log_dir + "/" + ts;
-    pcd_dir_  = log_dir + "/";
+    pcd_dir_ = log_dir + "/";
   }
-  // Other log subdirs (debug mats, evo, images) stay relative to ROOT_DIR
   if (!root_dir.empty() && root_dir.back() != '/')
     root_dir += '/';
-  for (const char *sub : {"Log", "Log/result", "Log/image", "Log/Colmap/sparse/0"})
+  for (const char *sub :
+       {"Log", "Log/result", "Log/image", "Log/Colmap/sparse/0"})
     mkdirp(root_dir + sub);
   initializeFiles();
   initializeComponents(p);
@@ -128,8 +130,9 @@ void LIVMapper::readParameters(const params::Params &p) {
   verbose_en = p.slam.verbose_en;
   global_map_en_ = p.slam.global_map_en;
   global_map_filter_size_ = p.slam.global_map_filter_size;
-  global_map_publish_interval_ =
-      (p.slam.global_map_publish_hz > 0.0) ? 1.0 / p.slam.global_map_publish_hz : 5.0;
+  global_map_publish_interval_ = (p.slam.global_map_publish_hz > 0.0)
+                                     ? 1.0 / p.slam.global_map_publish_hz
+                                     : 5.0;
   p_pre->blind_sqr = p_pre->blind * p_pre->blind;
   // ros_driver_fix_en not applicable (standalone has no ROS driver bug)
   ros_driver_fix_en = false;
@@ -196,8 +199,8 @@ void LIVMapper::initializeComponents(const params::Params &p) {
 
 void LIVMapper::initializeFiles() {
   if (pcd_save_en && colmap_output_en) {
-    const std::string folderPath =
-        root_dir + "scripts/colmap_output.sh";
+    // colmap_output.sh lives in the source tree, not the log dir
+    const std::string folderPath = ROOT_DIR "scripts/colmap_output.sh";
 
     std::string chmodCommand = "chmod +x " + folderPath;
 
@@ -218,11 +221,9 @@ void LIVMapper::initializeFiles() {
     fout_points.open(root_dir + "Log/Colmap/sparse/0/points3D.txt",
                      std::ios::out);
   if (pcd_save_en)
-    fout_lidar_pos.open(pcd_stem_ + "_lidar_poses.txt",
-                        std::ios::out);
+    fout_lidar_pos.open(pcd_stem_ + "_lidar_poses.txt", std::ios::out);
   if (img_save_en)
-    fout_visual_pos.open(root_dir + "Log/image/image_poses.txt",
-                         std::ios::out);
+    fout_visual_pos.open(root_dir + "Log/image/image_poses.txt", std::ios::out);
   fout_pre.open(root_dir + "Log/mat_pre.txt", std::ios::out);
   fout_out.open(root_dir + "Log/mat_out.txt", std::ios::out);
 }
@@ -399,14 +400,12 @@ void LIVMapper::handleLIO() {
     static int ocount = 0;
     std::ofstream outFile, evoFile;
     if (!pos_opend) {
-      evoFile.open(root_dir + "Log/result/" + seq_name + ".txt",
-                   std::ios::out);
+      evoFile.open(root_dir + "Log/result/" + seq_name + ".txt", std::ios::out);
       pos_opend = true;
       if (!evoFile.is_open())
         fprintf(stderr, "[LIVMapper] open evo file failed\n");
     } else {
-      evoFile.open(root_dir + "Log/result/" + seq_name + ".txt",
-                   std::ios::app);
+      evoFile.open(root_dir + "Log/result/" + seq_name + ".txt", std::ios::app);
       if (!evoFile.is_open())
         fprintf(stderr, "[LIVMapper] open evo file failed\n");
     }
@@ -543,7 +542,7 @@ void LIVMapper::savePCD() {
       (pcl_wait_save->points.size() > 0 ||
        pcl_wait_save_intensity->points.size() > 0) &&
       pcd_save_interval < 0) {
-    std::string raw_points_dir        = pcd_stem_ + "_raw.pcd";
+    std::string raw_points_dir = pcd_stem_ + "_raw.pcd";
     std::string downsampled_points_dir = pcd_stem_ + "_downsampled.pcd";
     pcl::PCDWriter pcd_writer;
 
@@ -1218,9 +1217,17 @@ void LIVMapper::publish_frame_world(VIOManagerPtr vio_manager) {
     livo::CloudData cd;
     cd.timestamp = LidarMeasures.last_lio_update_time;
     cd.cloud = outCloud;
-    std::lock_guard<std::mutex> lk(bridge_->viz_cloud_mtx);
-    if (bridge_->viz_cloud_queue.size() < livo::kVizCloudQueueMax)
-      bridge_->viz_cloud_queue.push(std::move(cd));
+    {
+      std::lock_guard<std::mutex> lk(bridge_->viz_cloud_mtx);
+      if (bridge_->viz_cloud_queue.size() < livo::kVizCloudQueueMax)
+        bridge_->viz_cloud_queue.push(cd);
+    }
+    // Also feed planner's dedicated queue (separate to avoid 3-consumer race)
+    {
+      std::lock_guard<std::mutex> lk(bridge_->planner_cloud_mtx);
+      if (bridge_->planner_cloud_queue.size() < livo::kPlannerCloudQueueMax)
+        bridge_->planner_cloud_queue.push(std::move(cd));
+    }
   }
 
   /**************** save map ****************/
@@ -1273,8 +1280,7 @@ void LIVMapper::publish_frame_world(VIOManagerPtr vio_manager) {
     }
     if ((pcl_wait_save->size() > 0 || pcl_wait_save_intensity->size() > 0) &&
         pcd_save_interval > 0 && scan_wait_num >= pcd_save_interval) {
-      string all_points_dir(pcd_dir_ +
-                            ss_time.str() + string(".pcd"));
+      string all_points_dir(pcd_dir_ + ss_time.str() + string(".pcd"));
 
       pcl::PCDWriter pcd_writer;
 
@@ -1307,8 +1313,7 @@ void LIVMapper::publish_frame_world(VIOManagerPtr vio_manager) {
     img_wait_num++;
 
     if (img_save_interval > 0 && img_wait_num >= img_save_interval) {
-      imwrite(string(root_dir + "Log/image/") + ss_time.str() +
-                  string(".png"),
+      imwrite(string(root_dir + "Log/image/") + ss_time.str() + string(".png"),
               vio_manager->img_rgb);
 
       Eigen::Quaterniond q(_state.rot_end);
@@ -1422,9 +1427,16 @@ void LIVMapper::publish_odometry() {
   pd.rotation = _state.rot_end;
   pd.position = _state.pos_end;
   pd.velocity = _state.vel_end;
-  std::lock_guard<std::mutex> lk(bridge_->pose_mtx);
-  if (bridge_->pose_queue.size() < 100)
-    bridge_->pose_queue.push(pd);
+  {
+    std::lock_guard<std::mutex> lk(bridge_->pose_mtx);
+    if (bridge_->pose_queue.size() < 100)
+      bridge_->pose_queue.push(pd);
+  }
+  {
+    std::lock_guard<std::mutex> lk(bridge_->planner_pose_mtx);
+    if (bridge_->planner_pose_queue.size() < 100)
+      bridge_->planner_pose_queue.push(pd);
+  }
 }
 
 // Stage 3.7: publish_mavros and publish_path removed (Stage 5 replaces with

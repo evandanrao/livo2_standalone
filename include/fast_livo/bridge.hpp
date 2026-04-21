@@ -24,6 +24,13 @@ static constexpr size_t kEffectCloudQueueMax = 5; // matched feature points
 static constexpr size_t kVoxelMapQueueMax = 3;    // voxel plane centroids
 static constexpr size_t kVisualMapQueueMax = 5;   // visual tracking sub-map
 static constexpr size_t kGlobalMapQueueMax = 2;   // accumulated downsampled map
+static constexpr size_t kPlannerTrajQueueMax = 4; // planner trajectory
+static constexpr size_t kPlannerOccQueueMax = 2;  // planner occupancy grid
+static constexpr size_t kPlannerGoalQueueMax = 4; // inbound goal commands
+static constexpr size_t kPlannerCloudQueueMax =
+    10; // planner-dedicated cloud feed
+static constexpr size_t kPlannerVizQueueMax = 20; // viz paths (all labels)
+static constexpr size_t kPlannerCmdQueueMax = 10; // 50 Hz position commands
 
 struct Bridge {
   // LiDAR driver → SLAM core
@@ -75,6 +82,38 @@ struct Bridge {
   // /livo2/global_map — downsampled accumulated world-frame point cloud
   std::mutex global_map_mtx;
   std::queue<CloudData> global_map_queue;
+
+  // ---- Planner visualisation channels -------------------------------------
+  // EGO-Planner → Foxglove: sampled trajectory waypoints
+  std::mutex planner_traj_mtx;
+  std::queue<TrajectoryData> planner_traj_queue;
+
+  // EGO-Planner → Foxglove: inflated occupancy voxels
+  std::mutex planner_occ_mtx;
+  std::queue<OccupancyViz> planner_occ_queue;
+
+  // External → Planner: goal commands from Foxglove WS or UDP
+  std::mutex planner_goal_mtx;
+  std::queue<Goal> planner_goal_queue;
+
+  // SLAM core → Planner: dedicated odom feed (separate from pose_queue which
+  // is consumed by foxglove_streamer — same race as planner_cloud_queue).
+  std::mutex planner_pose_mtx;
+  std::queue<PoseData> planner_pose_queue;
+
+  // SLAM core → Planner: dedicated cloud feed (separate from viz_cloud_queue
+  // to avoid a 3-consumer race with foxglove_streamer and lidar_publisher).
+  std::mutex planner_cloud_mtx;
+  std::queue<CloudData> planner_cloud_queue;
+
+  // EGO-Planner → Foxglove: visualization paths (goal, init, optimal,
+  // failed, astar, global).
+  std::mutex planner_viz_mtx;
+  std::queue<PlannerPath> planner_viz_queue;
+
+  // Traj server → Foxglove: 50 Hz position / velocity / yaw commands.
+  std::mutex planner_cmd_mtx;
+  std::queue<PositionCmd> planner_cmd_queue;
 
   // -------------------------------------------------------------------------
 

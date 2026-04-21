@@ -109,6 +109,28 @@ set(FAST_LIVO_SRCS
     src/fast_livo/visual_point.cpp
 )
 
+# ----- EGO-Planner static library -------------------------------------------
+set(EGO_PLANNER_SRCS
+    third_party/ego_planner/src/dyn_a_star.cpp
+    third_party/ego_planner/src/raycast.cpp
+    third_party/ego_planner/src/grid_map.cpp
+    third_party/ego_planner/src/poly_traj_optimizer.cpp
+    third_party/ego_planner/src/planner_manager.cpp
+    third_party/ego_planner/src/ego_replan_fsm.cpp
+    src/planner.cpp
+)
+add_library(ego_planner_core STATIC ${EGO_PLANNER_SRCS})
+target_include_directories(ego_planner_core PUBLIC
+    third_party/ego_planner/include
+    include/
+    include/fast_livo/
+    ${SOPHUS_INCLUDE_DIR}
+    ${EIGEN3_INCLUDE_DIR}
+    ${PCL_INCLUDE_DIRS}
+    ${OpenCV_INCLUDE_DIRS}
+)
+target_compile_features(ego_planner_core PUBLIC cxx_std_17)
+
 # ----- Main target -----------------------------------------------------------
 add_executable(hesai_livo2
     src/main.cpp
@@ -119,6 +141,7 @@ add_executable(hesai_livo2
     src/foxglove_streamer.cpp
     src/camera_loader.cpp
     src/lidar_publisher.cpp
+    src/goal_listener.cpp
     ${FAST_LIVO_SRCS}
 )
 
@@ -181,6 +204,8 @@ target_link_libraries(hesai_livo2 PRIVATE
     Eigen3::Eigen
     # Threading
     pthread
+    # EGO-Planner
+    ego_planner_core
 )
 # CUDA runtime — link libcudart so GPU parser symbols resolve at link time.
 # genex can't expand CUDA_LIBRARIES list reliably; plain if() is safer.

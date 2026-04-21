@@ -93,6 +93,11 @@ else
         "${REPO_DIR}/CMakeLists.txt" \
         "${JETSON_HOST}:${REMOTE_DIR}/CMakeLists.txt"
 
+    rsync -av \
+        --exclude='*.o' \
+        "${REPO_DIR}/third_party/ego_planner/" \
+        "${JETSON_HOST}:${REMOTE_DIR}/third_party/ego_planner/"
+
     echo "=== [2/2] Building on ${JETSON_HOST} ==="
     ssh "${JETSON_HOST}" bash -s <<ENDSSH
         set -e
@@ -116,6 +121,11 @@ echo "=== Deploying libfoxglove.so to ${JETSON_HOST}:/home/skygauge/ ==="
 rsync -av \
     "${REPO_DIR}/prebuilt/jetson_nx/lib/libfoxglove.so" \
     "${JETSON_HOST}:/home/skygauge/libfoxglove.so"
+
+# Hesai SDK .so files are also built on the noexec /media/internal_logs mount —
+# copy them to /home/skygauge/ so the dynamic linker can load them at runtime.
+echo "=== Deploying Hesai SDK .so files to ${JETSON_HOST}:/home/skygauge/ ==="
+ssh "${JETSON_HOST}" "cp ${REMOTE_DIR}/build/hesai_sdk_build/libhesai/*.so ${REMOTE_DIR}/build/hesai_sdk_build/libhesai_sdk_lib.so /home/skygauge/"
 
 DEPLOY_LAUNCHER="/home/skygauge/run_hesai_livo2.sh"
 echo "=== Creating launcher script ${JETSON_HOST}:${DEPLOY_LAUNCHER} ==="
