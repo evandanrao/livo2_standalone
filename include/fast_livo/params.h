@@ -159,14 +159,16 @@ struct PlannerParams {
   double virtual_ground = -0.1;
 
   // Preset waypoint flight mode
-  int target_type = 0;               // 0 = MANUAL_TARGET, 1 = PRESET_TARGET
-  bool realworld_experiment = false; // if true, wait for trigger before first move
+  int target_type = 0; // 0 = MANUAL_TARGET, 1 = PRESET_TARGET
+  bool realworld_experiment =
+      false; // if true, wait for trigger before first move
   int waypoint_num = 0;
   std::vector<std::array<double, 3>> waypoints; // list of [x,y,z] waypoints
 
   // Trajectory server yaw control
-  double time_forward = 1.0;                    // seconds look-ahead for yaw computation
-  bool enable_ground_height_measurement = false; // scan occupancy grid downward to find floor
+  double time_forward = 1.0; // seconds look-ahead for yaw computation
+  bool enable_ground_height_measurement =
+      false; // scan occupancy grid downward to find floor
 };
 
 struct Params {
@@ -190,6 +192,12 @@ struct Params {
     bool enable_ws = true;
     bool enable_mcap = true;
   } foxglove;
+  // UDP lidar publisher
+  struct PublisherParams {
+    std::string broadcast_addr =
+        "192.168.168.255"; // drone subnet; use 255.255.255.255 for desktop
+    int broadcast_port = 8892;
+  } publisher;
 };
 
 // Load from YAML files. Throws std::runtime_error on missing required fields.

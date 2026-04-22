@@ -344,6 +344,15 @@ Params load(const std::string &livo2_yaml, const std::string &camera_yaml) {
           readOr<bool>(n, "enable_mcap", p.foxglove.enable_mcap);
     }
   }
+  {
+    cv::FileNode n = fs["publisher"];
+    if (!n.empty()) {
+      p.publisher.broadcast_addr =
+          readOr<std::string>(n, "broadcast_addr", p.publisher.broadcast_addr);
+      p.publisher.broadcast_port =
+          readOr<int>(n, "broadcast_port", p.publisher.broadcast_port);
+    }
+  }
 
   // planner:
   {

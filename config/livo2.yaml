@@ -123,6 +123,13 @@ foxglove:
   enable_mcap: 1
   ws_port: 8765
 
+# ─── UDP lidar publisher ──────────────────────────────────────────────────────
+# broadcast_addr: drone subnet = 192.168.168.255 (default)
+#                 desktop/localhost = 255.255.255.255
+publisher:
+  broadcast_addr: "255.255.255.255"
+  broadcast_port: 8892
+
 # ─── EGO-Planner ──────────────────────────────────────────────────────────────
 planner:
   # FSM

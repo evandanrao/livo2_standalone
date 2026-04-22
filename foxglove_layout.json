@@ -1,0 +1,128 @@
+{
+  "configById": {
+    "Publish!2m5ckr3": {
+      "topicName": "/planner/goal",
+      "datatype": "foxglove.Vector3",
+      "value": "{\n  \"x\": -0.81,\n  \"y\": 0,\n  \"z\": 0\n}"
+    },
+    "3D!2uw61jh": {
+      "cameraState": {
+        "perspective": true,
+        "distance": 10.266841665574546,
+        "phi": 32.5043162484689,
+        "thetaOffset": -3.4676409080248796,
+        "targetOffset": [
+          0.008069198466189208,
+          -0.05431227574128204,
+          -9.692715845341433e-19
+        ],
+        "target": [
+          0,
+          0,
+          0
+        ],
+        "targetOrientation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "fovy": 45,
+        "near": 0.5,
+        "far": 5000
+      },
+      "followMode": "follow-pose",
+      "scene": {},
+      "transforms": {},
+      "topics": {
+        "/planner/occupancy": {
+          "visible": true,
+          "colorField": "z",
+          "colorMode": "gradient",
+          "colorMap": "rainbow",
+          "explicitAlpha": 0.2,
+          "decayTime": 0,
+          "pointShape": "cube",
+          "gradient": [
+            "#db2a2aff",
+            "#ed2d2d00"
+          ],
+          "cubeSize": 0.02
+        },
+        "/livo2/global_map": {
+          "visible": false,
+          "colorField": "intensity",
+          "colorMode": "colormap",
+          "colorMap": "turbo"
+        },
+        "/livo2/path": {
+          "visible": true,
+          "type": "line",
+          "lineWidth": 0.015
+        },
+        "/planner/trajectory": {
+          "visible": true,
+          "type": "axis",
+          "arrowScale": [
+            0.5,
+            0.005,
+            0.15
+          ],
+          "lineWidth": 0.02
+        },
+        "/livo2/map_cloud": {
+          "visible": true,
+          "colorField": "intensity",
+          "colorMode": "colormap",
+          "colorMap": "turbo"
+        }
+      },
+      "layers": {
+        "grid": {
+          "visible": true,
+          "drawBehind": false,
+          "label": "Grid",
+          "instanceId": "37a2f405-f1e1-41a6-8e91-0c77869b8310",
+          "layerId": "foxglove.Grid",
+          "size": 100,
+          "divisions": 10,
+          "lineWidth": 1,
+          "color": "#b0b0b0ff",
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        }
+      },
+      "publish": {
+        "type": "point",
+        "poseTopic": "/move_base_simple/goal",
+        "pointTopic": "/clicked_point",
+        "poseEstimateTopic": "/initialpose",
+        "poseEstimateXDeviation": 0.5,
+        "poseEstimateYDeviation": 0.5,
+        "poseEstimateThetaDeviation": 0.26179939
+      },
+      "synchronize": false,
+      "imageMode": {}
+    }
+  },
+  "globalVariables": {},
+  "layout": {
+    "direction": "row",
+    "first": "Publish!2m5ckr3",
+    "second": "3D!2uw61jh",
+    "splitPercentage": 25.11415525114155
+  },
+  "playbackConfig": {
+    "speed": 1
+  },
+  "userNodes": {},
+  "version": "mosaic-v1"
+}
