@@ -174,7 +174,7 @@ planner:
   p_min: 0.12
   p_max: 0.97
   p_occ: 0.80
-  fading_time: 1000.0
+  fading_time: 10.0          # seconds; occupied voxels not re-confirmed within this time fade out
   min_ray_length: 0.3        # metres; points closer than this to drone are filtered
   odom_depth_timeout: 1.0
   enable_virtual_wall: 0

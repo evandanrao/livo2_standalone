@@ -108,15 +108,10 @@ void GridMap::initMap(const GridMapParams &gmp) {
 // ---------------------------------------------------------------------------
 void GridMap::inputPointCloud(const std::vector<Eigen::Vector3d> &pts,
                               const Eigen::Vector3d &sensor_pos) {
-  if (!md_.has_odom_) {
-    // Set camera_pos from sensor_pos until odom is received
-    md_.camera_pos_ = sensor_pos;
-  }
-
   if (pts.empty())
     return;
-  if (!std::isfinite(md_.camera_pos_(0)) ||
-      !std::isfinite(md_.camera_pos_(1)) || !std::isfinite(md_.camera_pos_(2)))
+  if (!std::isfinite(sensor_pos(0)) || !std::isfinite(sensor_pos(1)) ||
+      !std::isfinite(sensor_pos(2)))
     return;
 
   if (!mp_.have_initialized_)
@@ -124,23 +119,23 @@ void GridMap::inputPointCloud(const std::vector<Eigen::Vector3d> &pts,
   if (md_.ringbuffer_lowbound3d_.norm() < 1e-10)
     initMapBoundary(); // lazy first call
 
-  moveRingBuffer();
+  // Update ray origin so raycastProcess() marks free space correctly.
+  md_.camera_pos_ = sensor_pos;
+  md_.has_odom_ = true;
 
+  // Populate proj_points_ for the raycast pass in updateOccupancy().
+  // Previously this function stamped occupied voxels directly to clamp_max,
+  // bypassing raycastProcess entirely — meaning free space was never marked
+  // and the map only ever grew denser. By feeding proj_points_ instead,
+  // raycastProcess traces a ray from sensor_pos through each point, marking
+  // all voxels along the ray as free (miss) and the endpoint as occupied.
+  if ((int)md_.proj_points_.size() < (int)pts.size())
+    md_.proj_points_.resize(pts.size());
+  md_.proj_points_cnt_ = 0;
   for (const auto &p3d : pts) {
     if (p3d.array().isNaN().sum())
       continue;
-
-    if (isInBuf(p3d)) {
-      Eigen::Vector3i idx = pos2GlobalIdx(p3d);
-      int buf_id = globalIdx2BufIdx(idx);
-      int inf_buf_id = globalIdx2InfBufIdx(idx);
-      md_.occupancy_buffer_[buf_id] = mp_.clamp_max_log_;
-
-      if (md_.occupancy_buffer_inflate_[inf_buf_id] < GRID_MAP_OBS_FLAG &&
-          md_.occupancy_buffer_[buf_id] >= mp_.min_occupancy_log_) {
-        changeInfBuf(true, inf_buf_id, idx);
-      }
-    }
+    md_.proj_points_[md_.proj_points_cnt_++] = p3d;
   }
 
   md_.occ_need_update_ = true;
