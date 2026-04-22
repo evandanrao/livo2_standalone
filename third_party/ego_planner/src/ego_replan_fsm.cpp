@@ -249,9 +249,10 @@ void EGOReplanFSM::checkCollision() {
 
   /* Lost sensor data */
   if (map->getOdomDepthTimeout()) {
-    fprintf(stderr, "[FSM] Sensor depth timeout! EMERGENCY_STOP\n");
-    enable_fail_safe_ = false;
-    changeFSMExecState(EMERGENCY_STOP, "SAFETY");
+    fprintf(stderr, "[FSM] Sensor depth timeout! -> WAIT_TARGET\n");
+    have_target_ = false;
+    have_trigger_ = !realworld_experiment_;
+    changeFSMExecState(WAIT_TARGET, "SAFETY");
     return;
   }
 

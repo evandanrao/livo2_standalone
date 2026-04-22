@@ -8,9 +8,10 @@
  * stream_client app (lidar_message_parser) works without modification.
  *
  * Commands published:
- *   CMD_LIDAR_ODOM (72) — 10 Hz  — current pose
- *   CMD_LIDAR_SCAN (73) —  5 Hz  — per-frame world cloud (chunked)
- *   CMD_LIDAR_PATH (74) —  1 Hz  — accumulated path trail (chunked)
+ *   CMD_LIDAR_ODOM   (72) — 10 Hz  — current pose
+ *   CMD_LIDAR_SCAN   (73) —  5 Hz  — per-frame world cloud (chunked)
+ *   CMD_LIDAR_PATH   (74) —  1 Hz  — accumulated path trail (chunked)
+ *   CMD_OCC_VOXELS   (75) —  2 Hz  — inflated occupancy voxels (chunked)
  */
 
 #include "lidar_publisher.hpp"
@@ -44,6 +45,7 @@ static constexpr uint16_t MAX_DATA_LEN = 1024;
 static constexpr uint8_t CMD_LIDAR_ODOM = 72;
 static constexpr uint8_t CMD_LIDAR_SCAN = 73;
 static constexpr uint8_t CMD_LIDAR_PATH = 74;
+static constexpr uint8_t CMD_OCC_VOXELS = 75;
 
 static constexpr uint8_t VER_MAJOR = 1;
 static constexpr uint8_t VER_MINOR = 0;
@@ -58,7 +60,7 @@ static constexpr uint16_t BROADCAST_PORT_DEFAULT = 8892;
 static constexpr int ODOM_INTERVAL_MS = 100;  // 10 Hz
 static constexpr int SCAN_INTERVAL_MS = 200;  //  5 Hz
 static constexpr int PATH_INTERVAL_MS = 1000; //  1 Hz
-
+static constexpr int OCC_INTERVAL_MS  = 500;   //  2 Hz
 // Downsample the per-frame cloud before sending (keeps UDP budget reasonable)
 static constexpr float DOWNSAMPLE_LEAF = 0.12f; // metres
 
@@ -172,12 +174,29 @@ struct PathPose {
   float qx, qy, qz, qw;
 }; // 28 bytes → (1024-16)/28 = 36 poses per chunk
 
+// CMD_OCC_VOXELS — chunk header
+struct OccHeader {
+    uint16_t occ_seq;
+    uint8_t  chunk_id;
+    uint8_t  total_chunks;
+    uint32_t total_voxels;
+    double   timestamp_s;
+}; // 16 bytes
+
+// CMD_OCC_VOXELS — single voxel (int16 cm to save bandwidth)
+struct OccVoxel {
+    int16_t x_cm;
+    int16_t y_cm;
+    int16_t z_cm;
+    uint16_t reserved;
+}; // 8 bytes → (1024-16)/8 = 126 voxels per chunk
+
 #pragma pack(pop)
 
 static constexpr int MAX_POINTS_PER_CHUNK = 126; // (1024-16) / 8
-static constexpr int MAX_POSES_PER_CHUNK = 36;   // (1024-16) / 28
+static constexpr int MAX_POSES_PER_CHUNK  =  36; // (1024-16) / 28
+static constexpr int MAX_VOXELS_PER_CHUNK = 126; // (1024-16) / 8
 
-// ── Rate-limiter
 // ──────────────────────────────────────────────────────────────
 struct StreamState {
   using Clock = std::chrono::steady_clock;
@@ -222,6 +241,7 @@ void lidar_publisher_thread(livo::Bridge &bridge, const params::Params &p) {
   uint16_t pkt_id = 0;
   uint16_t scan_seq = 0;
   uint16_t path_seq = 0;
+  uint16_t occ_seq = 0;
   uint8_t packet_buf[MAX_DATA_LEN + FRAME_OVERHEAD];
 
   // VoxelGrid for per-frame scan downsampling
@@ -238,6 +258,7 @@ void lidar_publisher_thread(livo::Bridge &bridge, const params::Params &p) {
   StreamState odom_st{ODOM_INTERVAL_MS};
   StreamState scan_st{SCAN_INTERVAL_MS};
   StreamState path_st{PATH_INTERVAL_MS};
+  StreamState occ_st{OCC_INTERVAL_MS};
 
   // Helper: send path_accum as chunked CMD_LIDAR_PATH packets
   auto send_path = [&]() {
@@ -396,6 +417,58 @@ void lidar_publisher_thread(livo::Bridge &bridge, const params::Params &p) {
     if (path_st.due(now)) {
       send_path();
       path_st.mark(now);
+    }
+
+    // ── Drain planner_occ_queue — send occupancy voxel snapshot ─────────
+    if (occ_st.due(now)) {
+      livo::OccupancyViz ov;
+      bool has_occ = false;
+      {
+        std::lock_guard<std::mutex> lk(bridge.planner_occ_mtx);
+        if (!bridge.planner_occ_queue.empty()) {
+          ov = std::move(bridge.planner_occ_queue.back());
+          while (!bridge.planner_occ_queue.empty())
+            bridge.planner_occ_queue.pop();
+          has_occ = true;
+        }
+      }
+      if (has_occ && !ov.occupied_voxels.empty()) {
+        const int total_vox = (int)ov.occupied_voxels.size();
+        const int max_v = MAX_VOXELS_PER_CHUNK;
+        int total_chunks = (total_vox + max_v - 1) / max_v;
+        if (total_chunks > 255) total_chunks = 255;
+        occ_seq++;
+        int vi = 0;
+        for (int c = 0; c < total_chunks && vi < total_vox; c++) {
+          int n = std::min(max_v, total_vox - vi);
+          uint8_t chunk[sizeof(OccHeader) + MAX_VOXELS_PER_CHUNK * sizeof(OccVoxel)];
+          auto *hdr = reinterpret_cast<OccHeader *>(chunk);
+          hdr->occ_seq      = occ_seq;
+          hdr->chunk_id     = (uint8_t)c;
+          hdr->total_chunks = (uint8_t)total_chunks;
+          hdr->total_voxels = (uint32_t)total_vox;
+          hdr->timestamp_s  = ov.timestamp;
+          auto *vx = reinterpret_cast<OccVoxel *>(chunk + sizeof(OccHeader));
+          for (int i = 0; i < n; i++, vi++) {
+            const auto &p = ov.occupied_voxels[vi];
+            // Convert metres → cm, clamp to int16 range (±327m)
+            auto to_cm = [](float m) -> int16_t {
+              float cm = m * 100.0f;
+              if (cm >  32767.f) return  32767;
+              if (cm < -32768.f) return -32768;
+              return (int16_t)cm;
+            };
+            vx[i].x_cm     = to_cm(p.x());
+            vx[i].y_cm     = to_cm(p.y());
+            vx[i].z_cm     = to_cm(p.z());
+            vx[i].reserved = 0;
+          }
+          int payload_len = (int)(sizeof(OccHeader) + n * sizeof(OccVoxel));
+          int plen = build_packet(packet_buf, pkt_id, CMD_OCC_VOXELS, chunk, payload_len);
+          sendto(sock, packet_buf, plen, 0, (struct sockaddr *)&dest, sizeof(dest));
+        }
+      }
+      occ_st.mark(now);
     }
 
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
