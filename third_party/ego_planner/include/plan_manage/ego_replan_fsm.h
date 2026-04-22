@@ -109,6 +109,7 @@ private:
 
   FSM_EXEC_STATE exec_state_{INIT};
   int continously_called_times_{0};
+  int gen_new_traj_fail_cnt_{0}; // consecutive GEN_NEW_TRAJ/SEQ_START failures
 
   /* preset target state */
   int target_type_{0}; // 0 = MANUAL, 1 = PRESET

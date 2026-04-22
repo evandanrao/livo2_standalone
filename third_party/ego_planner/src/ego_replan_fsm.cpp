@@ -54,6 +54,7 @@ void EGOReplanFSM::setOdom(const Eigen::Vector3d &pos,
 }
 
 void EGOReplanFSM::setGoal(const Eigen::Vector3d &xyz) {
+  gen_new_traj_fail_cnt_ = 0;
   planNextWaypoint(xyz);
 }
 
@@ -127,12 +128,24 @@ void EGOReplanFSM::execFSM() {
     // single-drone: drone_id <= -1 always satisfies condition
     if (planner_manager_->pp_.drone_id <= 0) {
       bool success = planFromGlobalTraj(10);
-      if (success)
+      if (success) {
+        gen_new_traj_fail_cnt_ = 0;
         changeFSMExecState(EXEC_TRAJ, "FSM");
-      else {
-        fprintf(stderr,
-                "[FSM] Failed to generate first trajectory, retrying.\n");
-        changeFSMExecState(SEQUENTIAL_START, "FSM");
+      } else {
+        // Give up after ~200ms of consecutive failures (20 ticks × 10ms)
+        if (++gen_new_traj_fail_cnt_ >= 20) {
+          fprintf(stderr,
+                  "[FSM] Goal unreachable after %d attempts — goal may be "
+                  "inside an obstacle. Returning to WAIT_TARGET.\n",
+                  gen_new_traj_fail_cnt_ * 10);
+          gen_new_traj_fail_cnt_ = 0;
+          have_target_ = false;
+          changeFSMExecState(WAIT_TARGET, "FSM");
+        } else {
+          fprintf(stderr,
+                  "[FSM] Failed to generate first trajectory, retrying.\n");
+          changeFSMExecState(SEQUENTIAL_START, "FSM");
+        }
       }
     }
     break;
@@ -140,10 +153,21 @@ void EGOReplanFSM::execFSM() {
 
   case GEN_NEW_TRAJ: {
     if (planFromGlobalTraj(10)) {
+      gen_new_traj_fail_cnt_ = 0;
       changeFSMExecState(EXEC_TRAJ, "FSM");
       flag_escape_emergency_ = true;
     } else {
-      changeFSMExecState(GEN_NEW_TRAJ, "FSM");
+      if (++gen_new_traj_fail_cnt_ >= 20) {
+        fprintf(stderr,
+                "[FSM] Goal unreachable after %d attempts — goal may be "
+                "inside an obstacle. Returning to WAIT_TARGET.\n",
+                gen_new_traj_fail_cnt_ * 10);
+        gen_new_traj_fail_cnt_ = 0;
+        have_target_ = false;
+        changeFSMExecState(WAIT_TARGET, "FSM");
+      } else {
+        changeFSMExecState(GEN_NEW_TRAJ, "FSM");
+      }
     }
     break;
   }

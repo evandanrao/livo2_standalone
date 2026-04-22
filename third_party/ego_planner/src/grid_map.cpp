@@ -201,6 +201,8 @@ void GridMap::updateOccupancy(double now_s) {
 
   md_.occ_need_update_ = false;
   md_.last_occ_update_time_s_ = now_s;
+  md_.flag_depth_odom_timeout_ =
+      false; // cloud arrived — clear any stale timeout
 
   // Fire visualisation callback (replaces visCallback 0.125s timer)
   if (on_vis_ && (now_s - last_vis_time_s_) >= 0.125) {
