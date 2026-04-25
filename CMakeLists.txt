@@ -34,10 +34,24 @@ if(OpenMP_CXX_FOUND)
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
 endif()
 
-# GStreamer (for camera_driver.cpp)
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(GSTREAMER REQUIRED gstreamer-1.0)
-pkg_check_modules(GST_APP   REQUIRED gstreamer-app-1.0)
+# VimbaX SDK (for camera_driver.cpp — payload Allied Vision GigE camera)
+# Installed to /opt/VimbaX_2025-3 on both dev machines and the Jetson OBC.
+# Override via -DVIMBAX_ROOT=<path> if installed elsewhere.
+set(VIMBAX_ROOT "/opt/VimbaX_2025-3" CACHE PATH "Root directory of the VimbaX SDK")
+find_path(VIMBAX_INCLUDE_DIR VmbC/VmbC.h
+    PATHS "${VIMBAX_ROOT}/api/include"
+    NO_DEFAULT_PATH)
+find_library(VIMBAX_LIBRARY VmbC
+    PATHS "${VIMBAX_ROOT}/api/lib"
+    NO_DEFAULT_PATH)
+if(NOT VIMBAX_INCLUDE_DIR OR NOT VIMBAX_LIBRARY)
+  message(WARNING
+    "VimbaX SDK not found at ${VIMBAX_ROOT} — "
+    "payload camera will not be available. "
+    "Set -DVIMBAX_ROOT=<path> to enable it.")
+else()
+  message(STATUS "VimbaX SDK found: ${VIMBAX_LIBRARY}")
+endif()
 
 # Sophus — vendored header-only, no find_package needed
 # Code uses #include <sophus/se3.h>, so parent dir is the include root.
@@ -155,9 +169,8 @@ target_include_directories(hesai_livo2 PRIVATE
     ${EIGEN3_INCLUDE_DIR}
     ${PCL_INCLUDE_DIRS}
     ${OpenCV_INCLUDE_DIRS}
-    # GStreamer
-    ${GSTREAMER_INCLUDE_DIRS}
-    ${GST_APP_INCLUDE_DIRS}
+    # VimbaX SDK (payload camera)
+    $<$<BOOL:${VIMBAX_INCLUDE_DIR}>:${VIMBAX_INCLUDE_DIR}>
     # vikit_common
     third_party/vikit_common/include
     # Hesai SDK
@@ -179,12 +192,11 @@ target_include_directories(hesai_livo2 SYSTEM PRIVATE
     ${PCL_INCLUDE_DIRS}
 )
 
-# GStreamer library search path (needed when GStreamer is not in standard system paths,
-# e.g. Jetson local install at ~/gst/).  pkg_check_modules populates LIBRARY_DIRS.
-target_link_directories(hesai_livo2 PRIVATE
-    ${GSTREAMER_LIBRARY_DIRS}
-    ${GST_APP_LIBRARY_DIRS}
-)
+# VimbaX library search path
+if(VIMBAX_LIBRARY)
+  get_filename_component(VIMBAX_LIBRARY_DIR "${VIMBAX_LIBRARY}" DIRECTORY)
+  target_link_directories(hesai_livo2 PRIVATE "${VIMBAX_LIBRARY_DIR}")
+endif()
 
 target_link_libraries(hesai_livo2 PRIVATE
     # Hesai SDK
@@ -197,9 +209,8 @@ target_link_libraries(hesai_livo2 PRIVATE
     ${PCL_LIBRARIES}
     # Vision
     ${OpenCV_LIBS}
-    # GStreamer
-    ${GSTREAMER_LIBRARIES}
-    ${GST_APP_LIBRARIES}
+    # VimbaX SDK (payload camera)
+    $<$<BOOL:${VIMBAX_LIBRARY}>:${VIMBAX_LIBRARY}>
     # Eigen (header-only; link target sets -I correctly)
     Eigen3::Eigen
     # Threading
