@@ -4,20 +4,24 @@ common:
   lid_topic:  "/lidar_points"
   imu_topic:  "/lidar_imu"
   img_topic:  "/camera/image_raw"
-  img_en: 0   # disabled until stream_server camera socket is stable
+  img_en: 1
   lidar_en: 1
 
 extrin_calib:
+  # IMU is inside the LiDAR unit — LiDAR and IMU share the same frame
   extrinsic_T: [0.0, 0.0, 0.0]
   extrinsic_R: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
-  # Rotation from LiDAR to camera frame
-  # LiDAR: X=camera-right, Y=backward+down 45deg (connector), Z=forward+down 45deg (spin axis)
-  # Camera: X=right, Y=down, Z=forward
-  # Using exact 1/sqrt(2) = 0.7071067811865476 for Sophus SO3 orthogonality check
-  Rcl: [1.0, 0.0, 0.0, 0.0, 0.7071067811865476, 0.7071067811865476, 0.0, -0.7071067811865476, 0.7071067811865476]
-  # Translation: LiDAR origin in camera frame [right, down, forward] metres
-  # LiDAR is 50cm forward, 2cm below camera centre
-  Pcl: [0.0, 0.02, 0.50]
+  # Rcl: rotation from LiDAR frame -> camera frame (row-major 3x3)
+  # LiDAR frame (from diagram): +X=left, +Y=down, +Z=forward (spin axis)
+  # Camera frame (from diagram): +X=down (=LiDAR +Y), +Y=right (=LiDAR -X), +Z=forward (=LiDAR +Z)
+  # Camera is mounted above LiDAR, facing same forward direction; camera +Y points right in front view
+  # Row 1 (cam X = LiDAR +Y): [0,  1, 0]
+  # Row 2 (cam Y = LiDAR -X): [-1, 0, 0]
+  # Row 3 (cam Z = LiDAR +Z): [0,  0, 1]
+  Rcl: [0.0, 1.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+  # Pcl: LiDAR origin in camera frame [cam_X, cam_Y, cam_Z]
+  # LiDAR is 60.32mm below camera; world-down = cam +X
+  Pcl: [0.06032, 0.0, 0.0]
 
 time_offset:
   imu_time_offset: 0.0

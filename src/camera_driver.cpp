@@ -146,9 +146,9 @@ void camera_driver_thread(livo::Bridge &bridge, const params::Params &p) {
 
     // ── Step 2: Transport layer rescan ────────────────────────────────────
     {
-      VmbHandle_t tl_handles[10]{};
+      VmbTransportLayerInfo_t tl_info[10]{};
       VmbUint32_t tl_count = 0;
-      VmbTransportLayersList(tl_handles, 10, &tl_count, sizeof(VmbHandle_t));
+      VmbTransportLayersList(tl_info, 10, &tl_count, sizeof(VmbTransportLayerInfo_t));
       std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 

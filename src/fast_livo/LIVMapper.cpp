@@ -867,10 +867,25 @@ void LIVMapper::push_image(const livo::ImageData &img_in) {
       return;
   }
 
-  double msg_header_time = img_in.timestamp + img_time_offset;
-  if (fabs(msg_header_time - last_timestamp_img) < 0.001)
-    return;
+  // Camera timestamps are Unix wall-clock (seconds since 1970).
+  // Hesai SDK timestamps are device-internal time (seconds since boot / GPS ToW).
+  // Latch the offset on the first image after LiDAR is live so both domains align.
   if (last_timestamp_lidar < 0)
+    return;
+
+  static bool cam_offset_latched = false;
+  static double cam_clock_offset = 0.0;
+  if (!cam_offset_latched) {
+    cam_clock_offset = last_timestamp_lidar - img_in.timestamp;
+    cam_offset_latched = true;
+    fprintf(stderr, "[camera_driver] cam→lidar clock offset latched: %.3f s "
+                    "(lidar_t=%.6f  cam_wall_t=%.6f)\n",
+            cam_clock_offset, last_timestamp_lidar, img_in.timestamp);
+  }
+
+  double msg_header_time = img_in.timestamp + cam_clock_offset + img_time_offset;
+
+  if (fabs(msg_header_time - last_timestamp_img) < 0.001)
     return;
 
   if (msg_header_time < last_timestamp_img) {
@@ -888,7 +903,16 @@ void LIVMapper::push_image(const livo::ImageData &img_in) {
     return;
   }
 
-  img_buffer.push_back(img_in.image.clone());
+  // Resize to camera model resolution (scale applied in camera_loader).
+  cv::Mat frame = img_in.image;
+  if (cam_holder_) {
+    const int model_w = static_cast<int>(cam_holder_->width());
+    const int model_h = static_cast<int>(cam_holder_->height());
+    if (frame.cols != model_w || frame.rows != model_h)
+      cv::resize(frame, frame, cv::Size(model_w, model_h), 0, 0, cv::INTER_LINEAR);
+  }
+
+  img_buffer.push_back(frame.clone());
   img_time_buffer.push_back(img_time_correct);
 
   last_timestamp_img = img_time_correct;
@@ -992,9 +1016,6 @@ bool LIVMapper::sync_packages(LidarMeasureGroup &meas) {
 
       if (img_capture_time > lid_newest_time ||
           img_capture_time > imu_newest_time) {
-        // ROS_ERROR("lost first camera frame");
-        // printf("img_capture_time, lid_newest_time, imu_newest_time: %lf , %lf
-        // , %lf \n", img_capture_time, lid_newest_time, imu_newest_time);
         return false;
       }
 
